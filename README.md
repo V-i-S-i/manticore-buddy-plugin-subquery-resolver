@@ -12,6 +12,7 @@ Manticore Search does not natively support subqueries in IN clauses. This plugin
 
 ✅ Automatic detection and handling of IN/NOT IN clause subqueries
 ✅ **Multiple subqueries in a single query**
+✅ **Nested subqueries** (subqueries within subqueries)
 ✅ Transparent subquery execution and result injection
 ✅ Handles empty result sets gracefully (replaces with NULL)
 ✅ Supports Manticore MVA (multi-value attributes)
@@ -42,11 +43,40 @@ WHERE ANY(keyword_id) IN (
 
 ## How It Works
 
+### Basic Subquery Resolution
+
 1. Plugin detects the subquery pattern
 2. Extracts and executes: `SELECT id FROM rt_keywords_customers WHERE customers = 3408`
 3. Gets results, e.g., `[1, 5, 9, 12, ...]`
 4. Rewrites query: `SELECT id FROM rt_today_lt WHERE ANY(keyword_id) IN (1, 5, 9, 12, ...)`
 5. Executes final query and returns results
+
+### Nested Subquery Resolution
+
+For nested subqueries, the plugin uses **iterative layer-by-layer resolution**:
+
+1. **Iteration 1**: Finds and executes all innermost subqueries (those without further nesting)
+2. Replaces them with their results
+3. **Iteration 2**: The previously nested subqueries are now exposed and get resolved
+4. **Repeat** until no more subqueries remain (up to 10 levels deep)
+5. Execute the fully resolved final query
+
+**Example:**
+```sql
+-- Original query with 3 levels of nesting:
+WHERE product_id IN (SELECT id FROM products WHERE category_id IN (SELECT id FROM categories WHERE group_id IN (SELECT id FROM groups WHERE name = 'Tech')))
+
+-- After iteration 1 (innermost resolved):
+WHERE product_id IN (SELECT id FROM products WHERE category_id IN (SELECT id FROM categories WHERE group_id IN (5, 12, 18)))
+
+-- After iteration 2 (middle level resolved):
+WHERE product_id IN (SELECT id FROM products WHERE category_id IN (101, 102, 103, 104))
+
+-- After iteration 3 (outermost resolved):
+WHERE product_id IN (1001, 1002, 1003, 1004, 1005)
+
+-- Final query executed
+```
 
 ## Installation
 
@@ -118,20 +148,51 @@ WHERE product_id IN (SELECT id FROM products WHERE category = 'electronics')
 -- All three subqueries are resolved automatically
 ```
 
+### Nested Subqueries
+```sql
+-- Subqueries within subqueries (nesting)
+SELECT * FROM orders
+WHERE product_id IN (
+  SELECT id FROM products
+  WHERE category_id IN (
+    SELECT id FROM categories
+    WHERE parent_id IN (
+      SELECT id FROM category_groups WHERE name = 'Electronics'
+    )
+  )
+);
+-- Resolves from innermost to outermost automatically
+```
+
+### Complex Combinations
+```sql
+-- Multiple nested subqueries in one query
+SELECT * FROM articles
+WHERE author_id IN (
+  SELECT user_id FROM users
+  WHERE department_id IN (SELECT id FROM departments WHERE location = 'NY')
+)
+AND tag_id NOT IN (
+  SELECT tag_id FROM banned_tags
+  WHERE category_id IN (SELECT id FROM tag_categories WHERE restricted = 1)
+);
+-- Handles multiple nesting paths independently
+```
+
 ## Supported Features
 
 ✅ **Supported:**
 - Single-level IN/NOT IN subqueries in WHERE clause
 - **Multiple subqueries in one query**
+- **Nested subqueries** (subqueries within subqueries, up to 10 levels deep)
 - Simple SELECT subqueries returning a single column
 - MVA (multi-value attribute) fields
 - Empty result sets
 - Numeric and string values
 
 ❌ **Not Supported (yet):**
-- Nested subqueries (subqueries within subqueries)
 - Subqueries in HAVING, ORDER BY, etc.
-- Correlated subqueries
+- Correlated subqueries (subqueries that reference outer query columns)
 
 ⚠️ **Not Needed (Manticore already supports):**
 - FROM clause subqueries (derived tables): `SELECT * FROM (SELECT ...) AS t`
@@ -200,9 +261,15 @@ See [INSTALLATION.md](INSTALLATION.md#troubleshooting) for detailed troubleshoot
 
 ## Performance Considerations
 
-- Plugin executes subquery first, then main query (2 queries total)
+- **Simple queries**: Executes subquery first, then main query (2 queries total)
+- **Multiple subqueries**: Executes each subquery + final query (N+1 queries for N subqueries)
+- **Nested subqueries**: Executes queries layer by layer (sum of all subqueries at each level + final query)
+  - 2 levels: ~3-4 queries
+  - 3 levels: ~4-6 queries
+  - Each nesting level adds one iteration
 - For large result sets (1000+ values), there may be a slight delay
-- Consider using JOINs or application-level logic for very large datasets
+- **Deep nesting**: Limited to 10 levels to prevent infinite loops
+- Consider using JOINs or application-level logic for very large datasets or very deep nesting
 - Monitor query performance with `SHOW META`
 
 ## Contributing
