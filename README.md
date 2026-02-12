@@ -11,6 +11,7 @@ Manticore Search does not natively support subqueries in IN clauses. This plugin
 ## Features
 
 ✅ Automatic detection and handling of IN/NOT IN clause subqueries
+✅ **Multiple subqueries in a single query**
 ✅ Transparent subquery execution and result injection
 ✅ Handles empty result sets gracefully (replaces with NULL)
 ✅ Supports Manticore MVA (multi-value attributes)
@@ -107,10 +108,21 @@ WHERE product_id IN (SELECT id FROM products WHERE price < 0);
 -- Returns: Empty set (0.00 sec)
 ```
 
+### Multiple Subqueries in One Query
+```sql
+-- Multiple IN clause subqueries in the same query
+SELECT * FROM orders
+WHERE product_id IN (SELECT id FROM products WHERE category = 'electronics')
+  AND customer_id IN (SELECT id FROM customers WHERE country = 'USA')
+  AND status NOT IN (SELECT status_code FROM invalid_statuses);
+-- All three subqueries are resolved automatically
+```
+
 ## Supported Features
 
 ✅ **Supported:**
 - Single-level IN/NOT IN subqueries in WHERE clause
+- **Multiple subqueries in one query**
 - Simple SELECT subqueries returning a single column
 - MVA (multi-value attribute) fields
 - Empty result sets
@@ -118,7 +130,6 @@ WHERE product_id IN (SELECT id FROM products WHERE price < 0);
 
 ❌ **Not Supported (yet):**
 - Nested subqueries (subqueries within subqueries)
-- Multiple subqueries in one query
 - Subqueries in HAVING, ORDER BY, etc.
 - Correlated subqueries
 

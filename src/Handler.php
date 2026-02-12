@@ -48,71 +48,96 @@ final class Handler extends BaseHandlerWithClient
 			$query = $payload->query;
 			file_put_contents($logFile, "  Query: " . substr($query, 0, 150) . "\n", FILE_APPEND);
 
-			// Extract IN clause subquery using regex
+			// Extract ALL IN clause subqueries using regex
 			// Pattern matches: IN (SELECT ... FROM ...)
 			// Note: We only handle IN/NOT IN subqueries, not FROM clause subqueries (Manticore supports those)
 			$pattern = '/\b(?:NOT\s+)?IN\s*(\(\s*SELECT\s+[^()]+(?:\([^()]*\)[^()]*)*\))/is';
 
-			if (!preg_match($pattern, $query, $matches)) {
+			// Find all subqueries with their positions
+			if (!preg_match_all($pattern, $query, $matches, PREG_OFFSET_CAPTURE)) {
 				file_put_contents($logFile, "  ERROR: No subquery pattern matched\n\n", FILE_APPEND);
 				throw new RuntimeException('No valid IN clause subquery found in query');
 			}
 
-			$fullSubqueryWithParens = $matches[1]; // (SELECT ...)
-			$subquery = trim($matches[1], '() '); // SELECT ... (without outer parentheses)
-			file_put_contents($logFile, "  Extracted subquery: $subquery\n", FILE_APPEND);
+			// Get all subquery matches (with positions)
+			$subqueryMatches = $matches[1]; // Array of [match, offset] pairs
+			$subqueryCount = count($subqueryMatches);
+			file_put_contents($logFile, "  Found $subqueryCount subquery(ies)\n", FILE_APPEND);
 
-			// Execute subquery
-			file_put_contents($logFile, "  Executing subquery...\n", FILE_APPEND);
-			try {
-				$response = $manticoreClient->sendRequest($subquery);
-				if ($response->hasError()) {
-					throw new RuntimeException('Subquery failed: ' . $response->getError());
+			// Process subqueries from right to left (reverse order by offset)
+			// This ensures that replacing later subqueries doesn't affect the positions of earlier ones
+			usort($subqueryMatches, function ($a, $b) {
+				return $b[1] - $a[1]; // Sort by offset descending
+			});
+
+			$finalQuery = $query;
+
+			foreach ($subqueryMatches as $index => $matchInfo) {
+				$fullSubqueryWithParens = $matchInfo[0]; // (SELECT ...)
+				$offset = $matchInfo[1];
+				$subquery = trim($fullSubqueryWithParens, '() '); // SELECT ... (without outer parentheses)
+
+				file_put_contents($logFile, "  \n  Processing subquery #" . ($index + 1) . " at offset $offset:\n", FILE_APPEND);
+				file_put_contents($logFile, "    Subquery: $subquery\n", FILE_APPEND);
+
+				// Execute subquery
+				file_put_contents($logFile, "    Executing subquery...\n", FILE_APPEND);
+				try {
+					$response = $manticoreClient->sendRequest($subquery);
+					if ($response->hasError()) {
+						throw new RuntimeException('Subquery #' . ($index + 1) . ' failed: ' . $response->getError());
+					}
+					$resultData = $response->getData();
+					file_put_contents($logFile, "    Result count: " . count($resultData) . " rows\n", FILE_APPEND);
+				} catch (\Throwable $e) {
+					file_put_contents($logFile, "    ERROR executing subquery: " . $e->getMessage() . "\n\n", FILE_APPEND);
+					throw $e;
 				}
-				$resultData = $response->getData();
-				file_put_contents($logFile, "  Subquery result data: " . json_encode($resultData) . "\n", FILE_APPEND);
-			} catch (\Throwable $e) {
-				file_put_contents($logFile, "  ERROR executing subquery: " . $e->getMessage() . "\n\n", FILE_APPEND);
-				throw $e;
-			}
 
-			// Extract values from result (first column only)
-			$values = [];
-			if (is_array($resultData) && !empty($resultData)) {
-				foreach ($resultData as $row) {
-					if (is_array($row) && !empty($row)) {
-						$firstValue = reset($row);
+				// Extract values from result (first column only)
+				$values = [];
+				if (is_array($resultData) && !empty($resultData)) {
+					foreach ($resultData as $row) {
+						if (is_array($row) && !empty($row)) {
+							$firstValue = reset($row);
 
-						// Handle comma-separated MVA (multi-value attribute) strings from Manticore
-						if (is_string($firstValue) && str_contains($firstValue, ',')) {
-							// Split comma-separated values
-							$mvaValues = explode(',', $firstValue);
-							foreach ($mvaValues as $val) {
-								$val = trim($val);
-								if ($val !== '') {
-									$values[] = is_numeric($val) ? $val : "'" . addslashes($val) . "'";
+							// Handle comma-separated MVA (multi-value attribute) strings from Manticore
+							if (is_string($firstValue) && str_contains($firstValue, ',')) {
+								// Split comma-separated values
+								$mvaValues = explode(',', $firstValue);
+								foreach ($mvaValues as $val) {
+									$val = trim($val);
+									if ($val !== '') {
+										$values[] = is_numeric($val) ? $val : "'" . addslashes($val) . "'";
+									}
 								}
+							} elseif (is_numeric($firstValue) || is_string($firstValue)) {
+								// Single value
+								$values[] = is_numeric($firstValue) ? $firstValue : "'" . addslashes((string)$firstValue) . "'";
 							}
-						} elseif (is_numeric($firstValue) || is_string($firstValue)) {
-							// Single value
-							$values[] = is_numeric($firstValue) ? $firstValue : "'" . addslashes((string)$firstValue) . "'";
 						}
 					}
 				}
-			}
-			file_put_contents($logFile, "  Extracted values: " . json_encode($values) . "\n", FILE_APPEND);
+				file_put_contents($logFile, "    Extracted " . count($values) . " value(s)\n", FILE_APPEND);
 
-			// Create replacement string
-			if (empty($values)) {
-				$replacement = '(NULL)';
-			} else {
-				$replacement = '(' . implode(', ', $values) . ')';
-			}
-			file_put_contents($logFile, "  Replacement: $replacement\n", FILE_APPEND);
+				// Create replacement string
+				if (empty($values)) {
+					$replacement = '(NULL)';
+				} else {
+					$replacement = '(' . implode(', ', $values) . ')';
+				}
+				file_put_contents($logFile, "    Replacement: " . substr($replacement, 0, 100) . (strlen($replacement) > 100 ? '...' : '') . "\n", FILE_APPEND);
 
-			// Replace subquery with values
-			$finalQuery = str_replace($fullSubqueryWithParens, $replacement, $query);
-			file_put_contents($logFile, "  Final query: $finalQuery\n", FILE_APPEND);
+				// Replace this subquery with values using substr_replace for position-based replacement
+				$finalQuery = substr_replace(
+					$finalQuery,
+					$replacement,
+					$offset,
+					strlen($fullSubqueryWithParens)
+				);
+			}
+
+			file_put_contents($logFile, "  \n  Final query: " . substr($finalQuery, 0, 200) . (strlen($finalQuery) > 200 ? '...' : '') . "\n", FILE_APPEND);
 
 			// Execute final query
 			file_put_contents($logFile, "  Executing final query...\n", FILE_APPEND);
