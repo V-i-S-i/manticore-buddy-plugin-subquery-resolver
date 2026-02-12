@@ -1,0 +1,15 @@
+{
+  "name": "visi/buddy-plugin-subquery-resolver",
+  "description": "Manticore Search Buddy plugin to resolve subqueries by executing them separately and injecting results",
+  "type": "library",
+  "license": "GPL-2.0-or-later",
+  "autoload": {
+    "psr-4": {
+      "Manticoresearch\\Buddy\\Plugin\\SubqueryResolver\\": "src/"
+    }
+  },
+  "require": {
+    "php": ">=8.1",
+    "manticoresoftware/buddy-core": "^3.0"
+  }
+}
