@@ -26,7 +26,7 @@ mysql -h127.0.0.1 -P9306
 -- Install the plugin
 CREATE PLUGIN visi/buddy-plugin-subquery-resolver
 TYPE 'buddy'
-VERSION 'latest';
+VERSION 'dev-main';
 ```
 
 **Verify installation:**
