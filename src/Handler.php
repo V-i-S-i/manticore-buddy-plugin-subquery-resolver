@@ -48,9 +48,13 @@ final class Handler extends BaseHandlerWithClient
 			$query = $payload->query;
 			file_put_contents($logFile, "  Original query: " . substr($query, 0, 150) . "\n", FILE_APPEND);
 
-			// Pattern matches: IN (SELECT ... FROM ...)
-			// Note: We only handle IN/NOT IN subqueries, not FROM clause subqueries (Manticore supports those)
-			$pattern = '/\b(?:NOT\s+)?IN\s*(\(\s*SELECT\s+[^()]+(?:\([^()]*\)[^()]*)*\))/is';
+			// Two patterns to handle:
+			// 1. IN/NOT IN clause subqueries: IN (SELECT ...)
+			$inPattern = '/\b(?:NOT\s+)?IN\s*(\(\s*SELECT\s+[^()]+(?:\([^()]*\)[^()]*)*\))/is';
+
+			// 2. Comparison operator subqueries: =, !=, <>, <, >, <=, >= (SELECT ...)
+			// These return scalar values, not lists
+			$comparisonPattern = '/((?:=|!=|<>|<=|>=|<|>)\s*)(\(\s*SELECT\s+[^()]+(?:\([^()]*\)[^()]*)*\))/is';
 
 			$finalQuery = $query;
 			$iteration = 0;
@@ -58,33 +62,66 @@ final class Handler extends BaseHandlerWithClient
 
 			// Iteratively resolve subqueries from innermost to outermost
 			// This loop handles nested subqueries by processing them layer by layer
-			while (preg_match($pattern, $finalQuery) && $iteration < $maxIterations) {
+			while ((preg_match($inPattern, $finalQuery) || preg_match($comparisonPattern, $finalQuery)) && $iteration < $maxIterations) {
 				$iteration++;
 				file_put_contents($logFile, "\n=== Iteration $iteration ===\n", FILE_APPEND);
 				file_put_contents($logFile, "  Current query: " . substr($finalQuery, 0, 200) . "\n", FILE_APPEND);
 
-				// Find all subqueries at the current nesting level
-				if (!preg_match_all($pattern, $finalQuery, $matches, PREG_OFFSET_CAPTURE)) {
+				// Collect all subquery matches from both patterns
+				$allMatches = [];
+
+				// Find IN clause subqueries
+				if (preg_match_all($inPattern, $finalQuery, $inMatches, PREG_OFFSET_CAPTURE)) {
+					foreach ($inMatches[1] as $match) {
+						$allMatches[] = [
+							'type' => 'IN',
+							'fullMatch' => $match[0], // (SELECT ...)
+							'offset' => $match[1],
+							'operator' => '', // No operator needed for IN
+						];
+					}
+				}
+
+				// Find comparison operator subqueries
+				if (preg_match_all($comparisonPattern, $finalQuery, $compMatches, PREG_OFFSET_CAPTURE)) {
+					foreach ($compMatches[0] as $idx => $match) {
+						$allMatches[] = [
+							'type' => 'COMPARISON',
+							'fullMatch' => $match[0], // = (SELECT ...) including the operator
+							'offset' => $match[1],
+							'operator' => trim($compMatches[1][$idx][0]), // The operator part
+							'subqueryPart' => $compMatches[2][$idx][0], // Just the (SELECT ...) part
+						];
+					}
+				}
+
+				if (empty($allMatches)) {
 					break; // No more subqueries found
 				}
 
-				// Get all subquery matches (with positions)
-				$subqueryMatches = $matches[1]; // Array of [match, offset] pairs
-				$subqueryCount = count($subqueryMatches);
+				$subqueryCount = count($allMatches);
 				file_put_contents($logFile, "  Found $subqueryCount subquery(ies) in this iteration\n", FILE_APPEND);
 
 				// Process subqueries from right to left (reverse order by offset)
 				// This ensures that replacing later subqueries doesn't affect the positions of earlier ones
-				usort($subqueryMatches, function ($a, $b) {
-					return $b[1] - $a[1]; // Sort by offset descending
+				usort($allMatches, function ($a, $b) {
+					return $b['offset'] - $a['offset']; // Sort by offset descending
 				});
 
-				foreach ($subqueryMatches as $index => $matchInfo) {
-					$fullSubqueryWithParens = $matchInfo[0]; // (SELECT ...)
-					$offset = $matchInfo[1];
-					$subquery = trim($fullSubqueryWithParens, '() '); // SELECT ... (without outer parentheses)
+				foreach ($allMatches as $index => $matchInfo) {
+					$type = $matchInfo['type'];
+					$fullMatch = $matchInfo['fullMatch'];
+					$offset = $matchInfo['offset'];
 
-					file_put_contents($logFile, "  \n  Processing subquery #" . ($index + 1) . " at offset $offset:\n", FILE_APPEND);
+					// Extract the subquery SQL (without outer parentheses)
+					if ($type === 'IN') {
+						$subquery = trim($matchInfo['fullMatch'], '() '); // (SELECT ...) -> SELECT ...
+					} else {
+						// COMPARISON type
+						$subquery = trim($matchInfo['subqueryPart'], '() '); // (SELECT ...) -> SELECT ...
+					}
+
+					file_put_contents($logFile, "  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n", FILE_APPEND);
 					file_put_contents($logFile, "    Subquery: " . substr($subquery, 0, 100) . (strlen($subquery) > 100 ? '...' : '') . "\n", FILE_APPEND);
 
 					// Execute subquery
@@ -127,11 +164,25 @@ final class Handler extends BaseHandlerWithClient
 					}
 					file_put_contents($logFile, "    Extracted " . count($values) . " value(s)\n", FILE_APPEND);
 
-					// Create replacement string
-					if (empty($values)) {
-						$replacement = '(NULL)';
+					// Create replacement string based on subquery type
+					if ($type === 'IN') {
+						// IN clause: wrap values in parentheses
+						if (empty($values)) {
+							$replacement = '(NULL)';
+						} else {
+							$replacement = '(' . implode(', ', $values) . ')';
+						}
 					} else {
-						$replacement = '(' . implode(', ', $values) . ')';
+						// COMPARISON operator: return scalar value (first value only)
+						if (empty($values)) {
+							$replacement = $matchInfo['operator'] . ' NULL';
+						} else {
+							// Take first value only for scalar comparison
+							if (count($values) > 1) {
+								file_put_contents($logFile, "    WARNING: Comparison subquery returned " . count($values) . " values, using first one only\n", FILE_APPEND);
+							}
+							$replacement = $matchInfo['operator'] . ' ' . $values[0];
+						}
 					}
 					file_put_contents($logFile, "    Replacement: " . substr($replacement, 0, 100) . (strlen($replacement) > 100 ? '...' : '') . "\n", FILE_APPEND);
 
@@ -140,7 +191,7 @@ final class Handler extends BaseHandlerWithClient
 						$finalQuery,
 						$replacement,
 						$offset,
-						strlen($fullSubqueryWithParens)
+						strlen($fullMatch)
 					);
 				}
 

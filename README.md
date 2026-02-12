@@ -4,13 +4,18 @@ A Manticore Buddy plugin that enables SQL subquery support for IN/NOT IN clauses
 
 ## Overview
 
-Manticore Search does not natively support subqueries in IN clauses. This plugin intercepts such queries, executes the subquery separately, and injects the results into the main query - completely transparently to the client.
+Manticore Search does not natively support subqueries in WHERE clauses. This plugin intercepts such queries, executes the subqueries separately, and injects the results into the main query - completely transparently to the client.
 
-**Note:** Manticore already supports subqueries in FROM clauses (derived tables). This plugin only handles IN/NOT IN clause subqueries.
+**Supported subquery types:**
+- **IN/NOT IN clauses**: `WHERE id IN (SELECT ...)`
+- **Comparison operators**: `WHERE date > (SELECT ...)` using =, !=, <>, <, >, <=, >=
+
+**Note:** Manticore already supports subqueries in FROM clauses (derived tables). This plugin only handles WHERE clause subqueries.
 
 ## Features
 
 ✅ Automatic detection and handling of IN/NOT IN clause subqueries
+✅ **Comparison operator subqueries** (=, !=, <>, <, >, <=, >=)
 ✅ **Multiple subqueries in a single query**
 ✅ **Nested subqueries** (subqueries within subqueries)
 ✅ Transparent subquery execution and result injection
@@ -23,33 +28,52 @@ Manticore Search does not natively support subqueries in IN clauses. This plugin
 
 **Before (fails in Manticore):**
 ```sql
-SELECT id
-FROM rt_today_lt
+-- IN clause subquery
+SELECT id FROM rt_today_lt
 WHERE ANY(keyword_id) IN (
   SELECT id FROM rt_keywords_customers WHERE customers = 3408
 );
+-- ERROR: P01: syntax error, unexpected SELECT...
+
+-- Comparison operator subquery
+SELECT * FROM rt_today_lt
+WHERE date_added > (SELECT archive_start FROM customers WHERE id = 3408);
 -- ERROR: P01: syntax error, unexpected SELECT...
 ```
 
 **After (works with plugin):**
 ```sql
-SELECT id
-FROM rt_today_lt
+-- Both queries now work perfectly!
+SELECT id FROM rt_today_lt
 WHERE ANY(keyword_id) IN (
   SELECT id FROM rt_keywords_customers WHERE customers = 3408
 );
+-- ✅ Returns results successfully
+
+SELECT * FROM rt_today_lt
+WHERE date_added > (SELECT archive_start FROM customers WHERE id = 3408);
 -- ✅ Returns results successfully
 ```
 
 ## How It Works
 
-### Basic Subquery Resolution
+### Basic IN Clause Subquery Resolution
 
-1. Plugin detects the subquery pattern
+1. Plugin detects the subquery pattern: `IN (SELECT ...)`
 2. Extracts and executes: `SELECT id FROM rt_keywords_customers WHERE customers = 3408`
 3. Gets results, e.g., `[1, 5, 9, 12, ...]`
 4. Rewrites query: `SELECT id FROM rt_today_lt WHERE ANY(keyword_id) IN (1, 5, 9, 12, ...)`
 5. Executes final query and returns results
+
+### Comparison Operator Subquery Resolution
+
+1. Plugin detects comparison pattern: `> (SELECT ...)`, `= (SELECT ...)`, etc.
+2. Extracts and executes: `SELECT archive_start FROM customers WHERE id = 3408`
+3. Gets scalar result, e.g., `2024-01-15`
+4. Rewrites query: `SELECT * FROM rt_today_lt WHERE date_added > '2024-01-15'`
+5. Executes final query and returns results
+
+**Note:** For comparison operators, only the **first value** is used if multiple rows are returned.
 
 ### Nested Subquery Resolution
 
@@ -111,7 +135,7 @@ docker logs YOUR_CONTAINER 2>&1 | grep "local: subquery-resolver"
 
 ## Usage Examples
 
-### Basic Subquery
+### Basic IN Clause Subquery
 ```sql
 SELECT * FROM products
 WHERE id IN (SELECT product_id FROM orders WHERE customer_id = 123);
@@ -121,6 +145,21 @@ WHERE id IN (SELECT product_id FROM orders WHERE customer_id = 123);
 ```sql
 SELECT * FROM users
 WHERE id NOT IN (SELECT user_id FROM banned_users);
+```
+
+### Comparison Operator Subqueries
+```sql
+-- Greater than
+SELECT * FROM rt_today_lt
+WHERE date_added > (SELECT archive_start FROM customers WHERE id = 3408);
+
+-- Equals
+SELECT * FROM products
+WHERE category_id = (SELECT id FROM categories WHERE name = 'Electronics');
+
+-- Less than or equal
+SELECT * FROM orders
+WHERE total <= (SELECT credit_limit FROM customers WHERE id = 123);
 ```
 
 ### Multi-Value Attribute (MVA) Support
@@ -179,23 +218,96 @@ AND tag_id NOT IN (
 -- Handles multiple nesting paths independently
 ```
 
+### Comparison Operator Subqueries
+```sql
+-- Scalar subqueries with comparison operators
+SELECT * FROM rt_today_lt
+WHERE date_added > (SELECT archive_start FROM customers WHERE id = 3408);
+
+-- Works with all comparison operators
+SELECT * FROM products
+WHERE price <= (SELECT AVG(price) FROM products WHERE category = 'electronics')
+  AND stock >= (SELECT MIN(threshold) FROM inventory_settings)
+  AND created_at = (SELECT MAX(updated_at) FROM product_updates WHERE status = 'approved');
+
+-- Can be nested too
+SELECT * FROM orders
+WHERE total > (
+  SELECT AVG(total) FROM orders
+  WHERE customer_id IN (SELECT id FROM customers WHERE tier = 'premium')
+);
+```
+
 ## Supported Features
 
 ✅ **Supported:**
-- Single-level IN/NOT IN subqueries in WHERE clause
+- **IN/NOT IN clause subqueries** in WHERE clause
+- **Comparison operator subqueries** (=, !=, <>, <, >, <=, >=) returning scalar values
 - **Multiple subqueries in one query**
 - **Nested subqueries** (subqueries within subqueries, up to 10 levels deep)
+- **Mixed subquery types** (IN and comparison operators in same query)
 - Simple SELECT subqueries returning a single column
-- MVA (multi-value attribute) fields
-- Empty result sets
+- MVA (multi-value attribute) fields (for IN clauses)
+- Empty result sets (replaced with NULL)
 - Numeric and string values
 
 ❌ **Not Supported (yet):**
-- Subqueries in HAVING, ORDER BY, etc.
+- Subqueries in HAVING, ORDER BY, SELECT columns, etc.
 - Correlated subqueries (subqueries that reference outer query columns)
+- Multi-column subqueries
 
 ⚠️ **Not Needed (Manticore already supports):**
 - FROM clause subqueries (derived tables): `SELECT * FROM (SELECT ...) AS t`
+
+## Real-World Example
+
+Here's a comprehensive example demonstrating all plugin features working together:
+
+```sql
+-- Complex query with multiple subquery types and nesting
+SELECT
+  o.id,
+  o.customer_id,
+  o.total,
+  o.created_at
+FROM orders o
+WHERE
+  -- IN clause with nested subquery
+  o.customer_id IN (
+    SELECT c.id FROM customers c
+    WHERE c.tier = 'premium'
+      AND c.country_id IN (SELECT id FROM countries WHERE region = 'EU')
+  )
+  -- Comparison operator subquery
+  AND o.created_at > (SELECT last_promotion_date FROM settings WHERE key = 'promo_2024')
+  -- NOT IN clause subquery
+  AND o.status NOT IN (SELECT code FROM order_statuses WHERE is_cancelled = 1)
+  -- Another comparison subquery with nested IN
+  AND o.total >= (
+    SELECT MIN(min_order_total) FROM tier_settings
+    WHERE tier_id IN (SELECT id FROM tiers WHERE name = 'premium')
+  );
+```
+
+**What happens:**
+1. Plugin detects 5 subqueries (2 nested levels)
+2. **Iteration 1** resolves innermost subqueries:
+   - `SELECT id FROM countries WHERE region = 'EU'` → `(1, 5, 12)`
+   - `SELECT id FROM tiers WHERE name = 'premium'` → `(3)`
+3. **Iteration 2** resolves mid-level subqueries:
+   - `SELECT c.id FROM customers WHERE ... country_id IN (1, 5, 12)` → `(101, 205, 308)`
+   - `SELECT MIN(...) FROM tier_settings WHERE tier_id IN (3)` → `500.00`
+   - `SELECT last_promotion_date FROM settings ...` → `'2024-01-15'`
+   - `SELECT code FROM order_statuses ...` → `('CANC', 'REFUND')`
+4. **Final query** executes with all values resolved:
+```sql
+SELECT o.id, o.customer_id, o.total, o.created_at
+FROM orders o
+WHERE o.customer_id IN (101, 205, 308)
+  AND o.created_at > '2024-01-15'
+  AND o.status NOT IN ('CANC', 'REFUND')
+  AND o.total >= 500.00;
+```
 
 ## Testing
 
@@ -212,20 +324,32 @@ docker logs YOUR_CONTAINER 2>&1 | grep "local: subquery-resolver"
 # Expected: [BUDDY]   local: subquery-resolver
 ```
 
-### Run Test Query
+### Run Test Queries
 
 ```sql
 -- Create test tables
-CREATE TABLE test_main (id bigint, value text);
+CREATE TABLE test_main (id bigint, value text, created_at timestamp);
 CREATE TABLE test_sub (ref_id bigint);
+CREATE TABLE test_config (max_date timestamp);
 
 -- Insert data
-INSERT INTO test_main VALUES (1, 'a'), (2, 'b'), (3, 'c');
+INSERT INTO test_main VALUES (1, 'a', 1640000000), (2, 'b', 1650000000), (3, 'c', 1660000000);
 INSERT INTO test_sub VALUES (1), (3);
+INSERT INTO test_config VALUES (1655000000);
 
--- Test subquery
+-- Test IN clause subquery
 SELECT * FROM test_main WHERE id IN (SELECT ref_id FROM test_sub);
 -- Expected: Returns rows with id=1 and id=3
+
+-- Test comparison operator subquery
+SELECT * FROM test_main WHERE created_at > (SELECT max_date FROM test_config);
+-- Expected: Returns row with id=3
+
+-- Test mixed subqueries
+SELECT * FROM test_main
+WHERE id IN (SELECT ref_id FROM test_sub)
+  AND created_at < (SELECT max_date FROM test_config);
+-- Expected: Returns row with id=1
 ```
 
 ## Documentation
@@ -262,12 +386,15 @@ See [INSTALLATION.md](INSTALLATION.md#troubleshooting) for detailed troubleshoot
 ## Performance Considerations
 
 - **Simple queries**: Executes subquery first, then main query (2 queries total)
+  - Works the same for both IN clauses and comparison operators
 - **Multiple subqueries**: Executes each subquery + final query (N+1 queries for N subqueries)
+  - Can mix IN and comparison operator subqueries
 - **Nested subqueries**: Executes queries layer by layer (sum of all subqueries at each level + final query)
   - 2 levels: ~3-4 queries
   - 3 levels: ~4-6 queries
   - Each nesting level adds one iteration
-- For large result sets (1000+ values), there may be a slight delay
+- **Comparison operators**: Return single scalar value (first row only if multiple returned)
+- **Large result sets**: For IN clauses with 1000+ values, there may be a slight delay
 - **Deep nesting**: Limited to 10 levels to prevent infinite loops
 - Consider using JOINs or application-level logic for very large datasets or very deep nesting
 - Monitor query performance with `SHOW META`

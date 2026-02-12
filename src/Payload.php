@@ -28,13 +28,15 @@ final class Payload extends BasePayload
 	 */
 	public static function getInfo(): string
 	{
-		return 'Resolves IN/NOT IN subqueries by executing them separately and injecting results into main query';
+		return 'Resolves subqueries (IN/NOT IN and comparison operators) by executing them separately and injecting results';
 	}
 
 	/**
 	 * Check if the request matches this plugin
-	 * Looks for SELECT queries with IN clause subqueries
-	 * Note: Manticore supports FROM clause subqueries, so we only handle IN/NOT IN
+	 * Looks for SELECT queries with subqueries in:
+	 * - IN/NOT IN clauses: IN (SELECT ...)
+	 * - Comparison operators: =, !=, <>, <, >, <=, >= (SELECT ...)
+	 * Note: Manticore supports FROM clause subqueries, so we only handle WHERE clause subqueries
 	 * @param Request $request
 	 * @return bool
 	 */
@@ -64,8 +66,16 @@ final class Payload extends BasePayload
 
 			// Check for IN clause with subquery pattern: IN (SELECT ...)
 			// This matches both IN and NOT IN
-			$hasSubquery = preg_match('/\b(?:NOT\s+)?IN\s*\(\s*SELECT\s+/i', $query) > 0;
-			file_put_contents($logFile, "  Has subquery: " . ($hasSubquery ? 'YES' : 'NO') . "\n\n", FILE_APPEND);
+			$hasInSubquery = preg_match('/\b(?:NOT\s+)?IN\s*\(\s*SELECT\s+/i', $query) > 0;
+
+			// Check for comparison operator subqueries: =, !=, <>, <, >, <=, >= (SELECT ...)
+			$hasComparisonSubquery = preg_match('/(?:=|!=|<>|<=|>=|<|>)\s*\(\s*SELECT\s+/i', $query) > 0;
+
+			$hasSubquery = $hasInSubquery || $hasComparisonSubquery;
+
+			file_put_contents($logFile, "  Has IN subquery: " . ($hasInSubquery ? 'YES' : 'NO') . "\n", FILE_APPEND);
+			file_put_contents($logFile, "  Has comparison subquery: " . ($hasComparisonSubquery ? 'YES' : 'NO') . "\n", FILE_APPEND);
+			file_put_contents($logFile, "  Has any subquery: " . ($hasSubquery ? 'YES' : 'NO') . "\n\n", FILE_APPEND);
 
 			return $hasSubquery;
 		} catch (\Throwable $e) {
