@@ -114,24 +114,38 @@ WHERE product_id IN (1001, 1002, 1003, 1004, 1005)
 - Learn Buddy plugin architecture and best practices
 - Includes common pitfalls and debugging techniques
 
-## Quick Install (Docker)
+## Quick Install
 
-```bash
-# 1. Clone repository
-git clone https://github.com/yourusername/buddy-plugin-subquery-resolver.git
+**1. Configure persistent plugin directory** (add to `/etc/manticoresearch/manticore.conf`):
 
-# 2. Copy to container
-docker cp buddy-plugin-subquery-resolver YOUR_CONTAINER:/usr/share/manticore/modules/manticore-buddy/plugins/
-
-# 3. Setup autoloader (see INSTALLATION.md for details)
-# 4. Restart container
-docker restart YOUR_CONTAINER
-
-# 5. Verify
-docker logs YOUR_CONTAINER 2>&1 | grep "local: subquery-resolver"
+```ini
+common {
+    plugin_dir = /var/lib/manticore
+}
 ```
 
-**See [INSTALLATION.md](INSTALLATION.md) for complete step-by-step instructions.**
+**2. Install the plugin:**
+
+```sql
+CREATE PLUGIN visi/buddy-plugin-subquery-resolver TYPE 'buddy' VERSION 'dev-main';
+```
+
+**3. Verify installation:**
+
+```sql
+SHOW Buddy PLUGINS;
+```
+
+OR 
+
+```bash
+docker logs YOUR_CONTAINER 2>&1 | grep "extra: subquery-resolver"
+# Expected: [BUDDY]   extra: subquery-resolver
+```
+
+**Note:** The `plugin_dir` setting ensures plugins persist across container restarts. Without it, plugins would be lost on restart.
+
+**See [INSTALLATION.md](INSTALLATION.md) for detailed installation instructions and troubleshooting.**
 
 ## Usage Examples
 
