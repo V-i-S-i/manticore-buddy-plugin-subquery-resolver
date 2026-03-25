@@ -14,15 +14,16 @@ Manticore Search does not natively support subqueries in WHERE clauses. This plu
 
 ## Features
 
-✅ Automatic detection and handling of IN/NOT IN clause subqueries
-✅ **Comparison operator subqueries** (=, !=, <>, <, >, <=, >=)
-✅ **Multiple subqueries in a single query**
-✅ **Nested subqueries** (subqueries within subqueries)
-✅ Transparent subquery execution and result injection
-✅ Handles empty result sets gracefully (replaces with NULL)
-✅ Supports Manticore MVA (multi-value attributes)
-✅ No client-side changes required
-✅ Production-ready with comprehensive error handling
+- Automatic detection and handling of IN/NOT IN clause subqueries
+- Comparison operator subqueries (=, !=, <>, <, >, <=, >=)
+- Multiple subqueries in a single query
+- Nested subqueries (subqueries within subqueries, up to 10 levels)
+- Transparent subquery execution and result injection
+- Handles empty result sets gracefully (replaces with NULL)
+- Supports Manticore MVA (multi-value attributes)
+- No client-side changes required
+- Default result limit of 20,000 rows per subquery with error if limit is reached
+- Override limit per subquery with an explicit LIMIT clause
 
 ## Quick Example
 
@@ -101,6 +102,35 @@ WHERE product_id IN (1001, 1002, 1003, 1004, 1005)
 
 -- Final query executed
 ```
+
+### Subquery Result Limits
+
+Manticore Search defaults to returning 20 rows per query. The plugin automatically raises this to **20,000 rows** per subquery and sets `OPTION max_matches` accordingly.
+
+If a subquery returns exactly 20,000 rows (i.e. the limit is hit), the plugin throws an error to prevent silently truncated results:
+
+```
+Subquery #1 (iteration 2) returned 20000 rows, which equals the limit (20000).
+Results may be truncated. Add LIMIT <n> inside the subquery to raise it,
+e.g.: IN (SELECT ... LIMIT 100000)
+```
+
+**Override the limit** by adding an explicit `LIMIT` inside the subquery:
+
+```sql
+-- Raise the limit to 100,000 for this subquery
+SELECT aid, COUNT(*) AS cnt
+FROM article_relations
+WHERE aid IN (
+  SELECT id FROM mediamonitoring_all
+  WHERE keyword_id IN (
+    SELECT keyword_id FROM customers WHERE id = 5180
+  ) LIMIT 100000
+)
+GROUP BY aid ORDER BY cnt DESC LIMIT 500;
+```
+
+The `OPTION max_matches` is set automatically to match the explicit `LIMIT`, so no extra syntax is needed.
 
 ## Installation
 
@@ -408,7 +438,8 @@ See [INSTALLATION.md](INSTALLATION.md#troubleshooting) for detailed troubleshoot
   - 3 levels: ~4-6 queries
   - Each nesting level adds one iteration
 - **Comparison operators**: Return single scalar value (first row only if multiple returned)
-- **Large result sets**: For IN clauses with 1000+ values, there may be a slight delay
+- **Result limits**: Each subquery is capped at 20,000 rows by default. If the limit is hit, an error is raised. Override with an explicit `LIMIT N` inside the subquery (e.g. `IN (SELECT ... LIMIT 100000)`).
+- **Large result sets**: For IN clauses with many values, there may be a slight delay due to query string size. Keep subquery result sets reasonable in size.
 - **Deep nesting**: Limited to 10 levels to prevent infinite loops
 - Consider using JOINs or application-level logic for very large datasets or very deep nesting
 - Monitor query performance with `SHOW META`
