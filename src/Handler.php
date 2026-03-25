@@ -119,14 +119,14 @@ final class Handler extends BaseHandlerWithClient
 
 					// Extract the subquery SQL (without outer parentheses)
 					if ($type === 'IN') {
-						$subquery = trim($matchInfo['fullMatch'], '() '); // (SELECT ...) -> SELECT ...
+						$subquery = trim(substr($matchInfo['fullMatch'], 1, -1)); // (SELECT ...) -> SELECT ...
 					} else {
 						// COMPARISON type
-						$subquery = trim($matchInfo['subqueryPart'], '() '); // (SELECT ...) -> SELECT ...
+						$subquery = trim(substr($matchInfo['subqueryPart'], 1, -1)); // (SELECT ...) -> SELECT ...
 					}
 
 					file_put_contents($logFile, "  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n", FILE_APPEND);
-					file_put_contents($logFile, "    Subquery: " . $subquery/*substr($subquery, 0, 500)*/ . (strlen($subquery) > 500 ? '...' : '') . "\n", FILE_APPEND);
+					file_put_contents($logFile, "    Subquery: " . $subquery/*substr($subquery, 0, 500) . (strlen($subquery) > 500 ? '...' : '')*/ . "\n", FILE_APPEND);
 
 					// Strip any trailing ;SHOW META before executing (client may also append it)
 					$subquery = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $subquery);
