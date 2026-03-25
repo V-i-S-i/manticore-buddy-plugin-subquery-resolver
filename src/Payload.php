@@ -56,7 +56,7 @@ final class Payload extends BasePayload
 
 		try {
 			$query = self::getQuery($request);
-			Logger::debug("  Extracted query: " . substr($query, 0, 500) . "\n");
+			Logger::debug("  Extracted query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : '') . "\n");
 
 			// Check if it's a SELECT query
 			if (!preg_match('/^\s*SELECT\s+/i', $query)) {

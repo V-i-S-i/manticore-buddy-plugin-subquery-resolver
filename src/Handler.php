@@ -48,7 +48,7 @@ final class Handler extends BaseHandlerWithClient
 			$query = $payload->query;
 			// Strip any trailing ;SHOW META that Manticore appends to queries
 			$query = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $query);
-			Logger::debug("  Original query: " . substr($query, 0, 500) . "\n");
+			Logger::debug("  Original query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : '') . "\n");
 
 			// Two patterns to handle:
 			// 1. IN/NOT IN clause subqueries: IN (SELECT ...)
@@ -69,7 +69,7 @@ final class Handler extends BaseHandlerWithClient
 			while ((preg_match($inPattern, $finalQuery) || preg_match($comparisonPattern, $finalQuery)) && $iteration < $maxIterations) {
 				$iteration++;
 				Logger::debug("\n=== Iteration $iteration ===\n");
-				Logger::debug("  Current query: " . substr($finalQuery, 0, 500) . "\n");
+				Logger::debug("  Current query: " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n");
 
 				// Collect all subquery matches from both patterns
 				$allMatches = [];
@@ -191,7 +191,7 @@ final class Handler extends BaseHandlerWithClient
 							$replacement = $matchInfo['operator'] . ' ' . $values[0];
 						}
 					}
-					Logger::debug("    Replacement: " . substr($replacement, 0, 500) . (strlen($replacement) > 100 ? '...' : '') . "\n");
+					Logger::debug("    Replacement: " . substr($replacement, 0, 500) . (strlen($replacement) > 500 ? '...' : '') . "\n");
 
 					// Replace this subquery with values using substr_replace for position-based replacement
 					$finalQuery = substr_replace(
