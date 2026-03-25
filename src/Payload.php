@@ -48,7 +48,7 @@ final class Payload extends BasePayload
 			"[%s] hasMatch() called!\n  command: %s\n  payload: %s\n  error: %s\n  path: %s\n",
 			date('Y-m-d H:i:s'),
 			isset($request->command) ? $request->command : 'NOT SET',
-			isset($request->payload) ? substr($request->payload, 0, 200) : 'NOT SET',
+			isset($request->payload) ? substr($request->payload, 0, 500) : 'NOT SET',
 			isset($request->error) ? $request->error : 'NOT SET',
 			isset($request->path) ? $request->path : 'NOT SET'
 		);
@@ -56,7 +56,7 @@ final class Payload extends BasePayload
 
 		try {
 			$query = self::getQuery($request);
-			file_put_contents($logFile, "  Extracted query: " . substr($query, 0, 100) . "\n", FILE_APPEND);
+			file_put_contents($logFile, "  Extracted query: " . substr($query, 0, 500) . "\n", FILE_APPEND);
 
 			// Check if it's a SELECT query
 			if (!preg_match('/^\s*SELECT\s+/i', $query)) {
