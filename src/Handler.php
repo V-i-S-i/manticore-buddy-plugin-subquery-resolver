@@ -126,7 +126,7 @@ final class Handler extends BaseHandlerWithClient
 					}
 
 					file_put_contents($logFile, "  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n", FILE_APPEND);
-					file_put_contents($logFile, "    Subquery: " . substr($subquery, 0, 500) . (strlen($subquery) > 500 ? '...' : '') . "\n", FILE_APPEND);
+					file_put_contents($logFile, "    Subquery: " . $subquery/*substr($subquery, 0, 500)*/ . (strlen($subquery) > 500 ? '...' : '') . "\n", FILE_APPEND);
 
 					// Strip any trailing ;SHOW META before executing (client may also append it)
 					$subquery = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $subquery);
