@@ -50,11 +50,13 @@ final class Handler extends BaseHandlerWithClient
 
 			// Two patterns to handle:
 			// 1. IN/NOT IN clause subqueries: IN (SELECT ...)
-			$inPattern = '/\b(?:NOT\s+)?IN\s*(\(\s*SELECT\s+[^()]+(?:\([^()]*\)[^()]*)*\))/is';
+			// (?!\bSELECT\b) inside the inner paren group ensures we only match leaf subqueries
+			// (those without a nested SELECT), so we always process innermost subqueries first.
+			$inPattern = '/\b(?:NOT\s+)?IN\s*(\(\s*SELECT\s+[^()]+(?:\((?!SELECT\b)[^()]*\)[^()]*)*\))/is';
 
 			// 2. Comparison operator subqueries: =, !=, <>, <, >, <=, >= (SELECT ...)
 			// These return scalar values, not lists
-			$comparisonPattern = '/((?:=|!=|<>|<=|>=|<|>)\s*)(\(\s*SELECT\s+[^()]+(?:\([^()]*\)[^()]*)*\))/is';
+			$comparisonPattern = '/((?:=|!=|<>|<=|>=|<|>)\s*)(\(\s*SELECT\s+[^()]+(?:\((?!SELECT\b)[^()]*\)[^()]*)*\))/is';
 
 			$finalQuery = $query;
 			$iteration = 0;
