@@ -48,7 +48,7 @@ final class Handler extends BaseHandlerWithClient
 			$query = $payload->query;
 			// Strip any trailing ;SHOW META that Manticore appends to queries
 			$query = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $query);
-			file_put_contents($logFile, "  Original query: " . substr($query, 0, 150) . "\n", FILE_APPEND);
+			file_put_contents($logFile, "  Original query: " . substr($query, 0, 500) . "\n", FILE_APPEND);
 
 			// Two patterns to handle:
 			// 1. IN/NOT IN clause subqueries: IN (SELECT ...)
@@ -69,7 +69,7 @@ final class Handler extends BaseHandlerWithClient
 			while ((preg_match($inPattern, $finalQuery) || preg_match($comparisonPattern, $finalQuery)) && $iteration < $maxIterations) {
 				$iteration++;
 				file_put_contents($logFile, "\n=== Iteration $iteration ===\n", FILE_APPEND);
-				file_put_contents($logFile, "  Current query: " . substr($finalQuery, 0, 200) . "\n", FILE_APPEND);
+				file_put_contents($logFile, "  Current query: " . substr($finalQuery, 0, 500) . "\n", FILE_APPEND);
 
 				// Collect all subquery matches from both patterns
 				$allMatches = [];
@@ -126,7 +126,7 @@ final class Handler extends BaseHandlerWithClient
 					}
 
 					file_put_contents($logFile, "  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n", FILE_APPEND);
-					file_put_contents($logFile, "    Subquery: " . substr($subquery, 0, 100) . (strlen($subquery) > 100 ? '...' : '') . "\n", FILE_APPEND);
+					file_put_contents($logFile, "    Subquery: " . substr($subquery, 0, 500) . (strlen($subquery) > 500 ? '...' : '') . "\n", FILE_APPEND);
 
 					// Strip any trailing ;SHOW META before executing (client may also append it)
 					$subquery = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $subquery);
@@ -191,7 +191,7 @@ final class Handler extends BaseHandlerWithClient
 							$replacement = $matchInfo['operator'] . ' ' . $values[0];
 						}
 					}
-					file_put_contents($logFile, "    Replacement: " . substr($replacement, 0, 100) . (strlen($replacement) > 100 ? '...' : '') . "\n", FILE_APPEND);
+					file_put_contents($logFile, "    Replacement: " . substr($replacement, 0, 500) . (strlen($replacement) > 100 ? '...' : '') . "\n", FILE_APPEND);
 
 					// Replace this subquery with values using substr_replace for position-based replacement
 					$finalQuery = substr_replace(
@@ -202,14 +202,14 @@ final class Handler extends BaseHandlerWithClient
 					);
 				}
 
-				file_put_contents($logFile, "  Query after iteration $iteration: " . substr($finalQuery, 0, 200) . (strlen($finalQuery) > 200 ? '...' : '') . "\n", FILE_APPEND);
+				file_put_contents($logFile, "  Query after iteration $iteration: " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n", FILE_APPEND);
 			}
 
 			if ($iteration >= $maxIterations) {
 				file_put_contents($logFile, "  WARNING: Max iterations ($maxIterations) reached. Possible infinite loop or extremely deep nesting.\n", FILE_APPEND);
 			}
 
-			file_put_contents($logFile, "\n  Final resolved query (after $iteration iteration(s)): " . substr($finalQuery, 0, 250) . (strlen($finalQuery) > 250 ? '...' : '') . "\n", FILE_APPEND);
+			file_put_contents($logFile, "\n  Final resolved query (after $iteration iteration(s)): " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n", FILE_APPEND);
 
 			// Execute final query
 			file_put_contents($logFile, "  Executing final query...\n", FILE_APPEND);
