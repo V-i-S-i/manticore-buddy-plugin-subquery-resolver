@@ -15,6 +15,7 @@ use Manticoresearch\Buddy\Core\ManticoreSearch\Client as HTTPClient;
 use Manticoresearch\Buddy\Core\Plugin\BaseHandlerWithClient;
 use Manticoresearch\Buddy\Core\Task\Task;
 use Manticoresearch\Buddy\Core\Task\TaskResult;
+use Manticoresearch\Buddy\Plugin\SubqueryResolver\Logger;
 use RuntimeException;
 
 /**
@@ -42,13 +43,12 @@ final class Handler extends BaseHandlerWithClient
 			Payload $payload,
 			HTTPClient $manticoreClient
 		): TaskResult {
-			$logFile = '/tmp/subquery-handler-debug.log';
-			file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Handler started\n", FILE_APPEND);
+			Logger::debug("[" . date('Y-m-d H:i:s') . "] Handler started\n");
 
 			$query = $payload->query;
 			// Strip any trailing ;SHOW META that Manticore appends to queries
 			$query = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $query);
-			file_put_contents($logFile, "  Original query: " . substr($query, 0, 500) . "\n", FILE_APPEND);
+			Logger::debug("  Original query: " . substr($query, 0, 500) . "\n");
 
 			// Two patterns to handle:
 			// 1. IN/NOT IN clause subqueries: IN (SELECT ...)
@@ -68,8 +68,8 @@ final class Handler extends BaseHandlerWithClient
 			// This loop handles nested subqueries by processing them layer by layer
 			while ((preg_match($inPattern, $finalQuery) || preg_match($comparisonPattern, $finalQuery)) && $iteration < $maxIterations) {
 				$iteration++;
-				file_put_contents($logFile, "\n=== Iteration $iteration ===\n", FILE_APPEND);
-				file_put_contents($logFile, "  Current query: " . substr($finalQuery, 0, 500) . "\n", FILE_APPEND);
+				Logger::debug("\n=== Iteration $iteration ===\n");
+				Logger::debug("  Current query: " . substr($finalQuery, 0, 500) . "\n");
 
 				// Collect all subquery matches from both patterns
 				$allMatches = [];
@@ -104,7 +104,7 @@ final class Handler extends BaseHandlerWithClient
 				}
 
 				$subqueryCount = count($allMatches);
-				file_put_contents($logFile, "  Found $subqueryCount subquery(ies) in this iteration\n", FILE_APPEND);
+				Logger::debug("  Found $subqueryCount subquery(ies) in this iteration\n");
 
 				// Process subqueries from right to left (reverse order by offset)
 				// This ensures that replacing later subqueries doesn't affect the positions of earlier ones
@@ -125,23 +125,23 @@ final class Handler extends BaseHandlerWithClient
 						$subquery = trim(substr($matchInfo['subqueryPart'], 1, -1)); // (SELECT ...) -> SELECT ...
 					}
 
-					file_put_contents($logFile, "  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n", FILE_APPEND);
-					file_put_contents($logFile, "    Subquery: " . $subquery/*substr($subquery, 0, 500) . (strlen($subquery) > 500 ? '...' : '')*/ . "\n", FILE_APPEND);
+					Logger::debug("  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n");
+					Logger::debug("    Subquery: " . substr($subquery, 0, 500) . (strlen($subquery) > 500 ? '...' : '') . "\n");
 
 					// Strip any trailing ;SHOW META before executing (client may also append it)
 					$subquery = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $subquery);
 
 					// Execute subquery
-					file_put_contents($logFile, "    Executing subquery...\n", FILE_APPEND);
+					Logger::debug("    Executing subquery...\n");
 					try {
 						$response = $manticoreClient->sendRequest($subquery);
 						if ($response->hasError()) {
 							throw new RuntimeException('Subquery #' . ($index + 1) . ' (iteration ' . $iteration . ') failed: ' . $response->getError());
 						}
 						$resultData = $response->getData();
-						file_put_contents($logFile, "    Result count: " . count($resultData) . " rows\n", FILE_APPEND);
+						Logger::debug("    Result count: " . count($resultData) . " rows\n");
 					} catch (\Throwable $e) {
-						file_put_contents($logFile, "    ERROR executing subquery: " . $e->getMessage() . "\n\n", FILE_APPEND);
+						Logger::debug("    ERROR executing subquery: " . $e->getMessage() . "\n\n");
 						throw $e;
 					}
 
@@ -169,7 +169,7 @@ final class Handler extends BaseHandlerWithClient
 							}
 						}
 					}
-					file_put_contents($logFile, "    Extracted " . count($values) . " value(s)\n", FILE_APPEND);
+					Logger::debug("    Extracted " . count($values) . " value(s)\n");
 
 					// Create replacement string based on subquery type
 					if ($type === 'IN') {
@@ -186,12 +186,12 @@ final class Handler extends BaseHandlerWithClient
 						} else {
 							// Take first value only for scalar comparison
 							if (count($values) > 1) {
-								file_put_contents($logFile, "    WARNING: Comparison subquery returned " . count($values) . " values, using first one only\n", FILE_APPEND);
+								Logger::debug("    WARNING: Comparison subquery returned " . count($values) . " values, using first one only\n");
 							}
 							$replacement = $matchInfo['operator'] . ' ' . $values[0];
 						}
 					}
-					file_put_contents($logFile, "    Replacement: " . substr($replacement, 0, 500) . (strlen($replacement) > 100 ? '...' : '') . "\n", FILE_APPEND);
+					Logger::debug("    Replacement: " . substr($replacement, 0, 500) . (strlen($replacement) > 100 ? '...' : '') . "\n");
 
 					// Replace this subquery with values using substr_replace for position-based replacement
 					$finalQuery = substr_replace(
@@ -202,25 +202,25 @@ final class Handler extends BaseHandlerWithClient
 					);
 				}
 
-				file_put_contents($logFile, "  Query after iteration $iteration: " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n", FILE_APPEND);
+				Logger::debug("  Query after iteration $iteration: " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n");
 			}
 
 			if ($iteration >= $maxIterations) {
-				file_put_contents($logFile, "  WARNING: Max iterations ($maxIterations) reached. Possible infinite loop or extremely deep nesting.\n", FILE_APPEND);
+				Logger::debug("  WARNING: Max iterations ($maxIterations) reached. Possible infinite loop or extremely deep nesting.\n");
 			}
 
-			file_put_contents($logFile, "\n  Final resolved query (after $iteration iteration(s)): " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n", FILE_APPEND);
+			Logger::debug("\n  Final resolved query (after $iteration iteration(s)): " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n");
 
 			// Execute final query
-			file_put_contents($logFile, "  Executing final query...\n", FILE_APPEND);
+			Logger::debug("  Executing final query...\n");
 			try {
 				$finalResponse = $manticoreClient->sendRequest($finalQuery);
 				if ($finalResponse->hasError()) {
 					throw new RuntimeException('Final query failed: ' . $finalResponse->getError());
 				}
-				file_put_contents($logFile, "  SUCCESS! Returning result\n\n", FILE_APPEND);
+				Logger::debug("  SUCCESS! Returning result\n\n");
 			} catch (\Throwable $e) {
-				file_put_contents($logFile, "  ERROR executing final query: " . $e->getMessage() . "\n\n", FILE_APPEND);
+				Logger::debug("  ERROR executing final query: " . $e->getMessage() . "\n\n");
 				throw $e;
 			}
 

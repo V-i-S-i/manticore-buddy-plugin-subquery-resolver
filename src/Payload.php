@@ -13,6 +13,7 @@ namespace Manticoresearch\Buddy\Plugin\SubqueryResolver;
 
 use Manticoresearch\Buddy\Core\Network\Request;
 use Manticoresearch\Buddy\Core\Plugin\BasePayload;
+use Manticoresearch\Buddy\Plugin\SubqueryResolver\Logger;
 
 /**
  * Payload class for the Subquery Resolver plugin
@@ -42,25 +43,24 @@ final class Payload extends BasePayload
 	 */
 	public static function hasMatch(Request $request): bool
 	{
-		// ALWAYS log to see if we're even being called
-		$logFile = '/tmp/subquery-plugin-debug.log';
-		$debugInfo = sprintf(
-			"[%s] hasMatch() called!\n  command: %s\n  payload: %s\n  error: %s\n  path: %s\n",
-			date('Y-m-d H:i:s'),
-			isset($request->command) ? $request->command : 'NOT SET',
-			isset($request->payload) ? substr($request->payload, 0, 500) : 'NOT SET',
-			isset($request->error) ? $request->error : 'NOT SET',
-			isset($request->path) ? $request->path : 'NOT SET'
+		Logger::debug(
+			sprintf(
+				"[%s] hasMatch() called!\n  command: %s\n  payload: %s\n  error: %s\n  path: %s\n",
+				date('Y-m-d H:i:s'),
+				isset($request->command) ? $request->command : 'NOT SET',
+				isset($request->payload) ? substr($request->payload, 0, 500) : 'NOT SET',
+				isset($request->error) ? $request->error : 'NOT SET',
+				isset($request->path) ? $request->path : 'NOT SET'
+			)
 		);
-		file_put_contents($logFile, $debugInfo, FILE_APPEND);
 
 		try {
 			$query = self::getQuery($request);
-			file_put_contents($logFile, "  Extracted query: " . substr($query, 0, 500) . "\n", FILE_APPEND);
+			Logger::debug("  Extracted query: " . substr($query, 0, 500) . "\n");
 
 			// Check if it's a SELECT query
 			if (!preg_match('/^\s*SELECT\s+/i', $query)) {
-				file_put_contents($logFile, "  Not a SELECT query\n\n", FILE_APPEND);
+				Logger::debug("  Not a SELECT query\n\n");
 				return false;
 			}
 
@@ -73,13 +73,13 @@ final class Payload extends BasePayload
 
 			$hasSubquery = $hasInSubquery || $hasComparisonSubquery;
 
-			file_put_contents($logFile, "  Has IN subquery: " . ($hasInSubquery ? 'YES' : 'NO') . "\n", FILE_APPEND);
-			file_put_contents($logFile, "  Has comparison subquery: " . ($hasComparisonSubquery ? 'YES' : 'NO') . "\n", FILE_APPEND);
-			file_put_contents($logFile, "  Has any subquery: " . ($hasSubquery ? 'YES' : 'NO') . "\n\n", FILE_APPEND);
+			Logger::debug("  Has IN subquery: " . ($hasInSubquery ? 'YES' : 'NO') . "\n");
+			Logger::debug("  Has comparison subquery: " . ($hasComparisonSubquery ? 'YES' : 'NO') . "\n");
+			Logger::debug("  Has any subquery: " . ($hasSubquery ? 'YES' : 'NO') . "\n\n");
 
 			return $hasSubquery;
 		} catch (\Throwable $e) {
-			file_put_contents($logFile, "  ERROR in hasMatch: " . $e->getMessage() . "\n\n", FILE_APPEND);
+			Logger::debug("  ERROR in hasMatch: " . $e->getMessage() . "\n\n");
 			return false;
 		}
 	}
