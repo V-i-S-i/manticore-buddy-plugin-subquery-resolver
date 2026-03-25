@@ -46,6 +46,8 @@ final class Handler extends BaseHandlerWithClient
 			file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Handler started\n", FILE_APPEND);
 
 			$query = $payload->query;
+			// Strip any trailing ;SHOW META that Manticore appends to queries
+			$query = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $query);
 			file_put_contents($logFile, "  Original query: " . substr($query, 0, 150) . "\n", FILE_APPEND);
 
 			// Two patterns to handle:
@@ -125,6 +127,9 @@ final class Handler extends BaseHandlerWithClient
 
 					file_put_contents($logFile, "  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n", FILE_APPEND);
 					file_put_contents($logFile, "    Subquery: " . substr($subquery, 0, 100) . (strlen($subquery) > 100 ? '...' : '') . "\n", FILE_APPEND);
+
+					// Strip any trailing ;SHOW META before executing (client may also append it)
+					$subquery = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $subquery);
 
 					// Execute subquery
 					file_put_contents($logFile, "    Executing subquery...\n", FILE_APPEND);
