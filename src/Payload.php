@@ -13,7 +13,7 @@ namespace Manticoresearch\Buddy\Plugin\SubqueryResolver;
 
 use Manticoresearch\Buddy\Core\Network\Request;
 use Manticoresearch\Buddy\Core\Plugin\BasePayload;
-use Manticoresearch\Buddy\Plugin\SubqueryResolver\Logger;
+use Manticoresearch\Buddy\Core\Tool\Buddy;
 
 /**
  * Payload class for the Subquery Resolver plugin
@@ -43,7 +43,7 @@ final class Payload extends BasePayload
 	 */
 	public static function hasMatch(Request $request): bool
 	{
-		Logger::debug(
+		Buddy::debugvv(
 			sprintf(
 				"[%s] hasMatch() called!\n  command: %s\n  payload: %s\n  error: %s\n  path: %s\n",
 				date('Y-m-d H:i:s'),
@@ -51,16 +51,17 @@ final class Payload extends BasePayload
 				isset($request->payload) ? substr($request->payload, 0, 500) : 'NOT SET',
 				isset($request->error) ? $request->error : 'NOT SET',
 				isset($request->path) ? $request->path : 'NOT SET'
-			)
+			),
+			''
 		);
 
 		try {
 			$query = self::getQuery($request);
-			Logger::debug("  Extracted query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : '') . "\n");
+			Buddy::debugvv("  Extracted query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : '') . "\n", '');
 
 			// Check if it's a SELECT query
 			if (!preg_match('/^\s*SELECT\s+/i', $query)) {
-				Logger::debug("  Not a SELECT query\n\n");
+				Buddy::debugvv("  Not a SELECT query\n\n", '');
 				return false;
 			}
 
@@ -73,13 +74,13 @@ final class Payload extends BasePayload
 
 			$hasSubquery = $hasInSubquery || $hasComparisonSubquery;
 
-			Logger::debug("  Has IN subquery: " . ($hasInSubquery ? 'YES' : 'NO') . "\n");
-			Logger::debug("  Has comparison subquery: " . ($hasComparisonSubquery ? 'YES' : 'NO') . "\n");
-			Logger::debug("  Has any subquery: " . ($hasSubquery ? 'YES' : 'NO') . "\n\n");
+			Buddy::debugvv("  Has IN subquery: " . ($hasInSubquery ? 'YES' : 'NO') . "\n", '');
+			Buddy::debugvv("  Has comparison subquery: " . ($hasComparisonSubquery ? 'YES' : 'NO') . "\n", '');
+			Buddy::debugvv("  Has any subquery: " . ($hasSubquery ? 'YES' : 'NO') . "\n\n", '');
 
 			return $hasSubquery;
 		} catch (\Throwable $e) {
-			Logger::debug("  ERROR in hasMatch: " . $e->getMessage() . "\n\n");
+			Buddy::debugvv("  ERROR in hasMatch: " . $e->getMessage() . "\n\n", '');
 			return false;
 		}
 	}

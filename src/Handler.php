@@ -15,7 +15,7 @@ use Manticoresearch\Buddy\Core\ManticoreSearch\Client as HTTPClient;
 use Manticoresearch\Buddy\Core\Plugin\BaseHandlerWithClient;
 use Manticoresearch\Buddy\Core\Task\Task;
 use Manticoresearch\Buddy\Core\Task\TaskResult;
-use Manticoresearch\Buddy\Plugin\SubqueryResolver\Logger;
+use Manticoresearch\Buddy\Core\Tool\Buddy;
 use RuntimeException;
 
 /**
@@ -43,12 +43,12 @@ public function run(): Task
         Payload $payload,
         HTTPClient $manticoreClient
     ): TaskResult {
-        Logger::debug("[" . date('Y-m-d H:i:s') . "] Handler started\n");
+        Buddy::debugvv("[" . date('Y-m-d H:i:s') . "] Handler started\n", '');
 
         $query = $payload->query;
         // Strip any trailing ;SHOW META that Manticore appends to queries
         $query = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $query);
-        Logger::debug("  Original query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : '') . "\n");
+        Buddy::debugvv("  Original query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : '') . "\n", '');
 
         // Two patterns to handle:
         // 1. IN/NOT IN clause subqueries: IN (SELECT ...)
@@ -68,8 +68,8 @@ public function run(): Task
         // This loop handles nested subqueries by processing them layer by layer
         while ((preg_match($inPattern, $finalQuery) || preg_match($comparisonPattern, $finalQuery)) && $iteration < $maxIterations) {
             $iteration++;
-            Logger::debug("\n=== Iteration $iteration ===\n");
-            Logger::debug("  Current query: " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n");
+            Buddy::debugvv("\n=== Iteration $iteration ===\n", '');
+            Buddy::debugvv("  Current query: " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n", '');
 
             // Collect all subquery matches from both patterns
             $allMatches = [];
@@ -104,7 +104,7 @@ public function run(): Task
             }
 
             $subqueryCount = count($allMatches);
-            Logger::debug("  Found $subqueryCount subquery(ies) in this iteration\n");
+            Buddy::debugvv("  Found $subqueryCount subquery(ies) in this iteration\n", '');
 
             // Process subqueries from right to left (reverse order by offset)
             // This ensures that replacing later subqueries doesn't affect the positions of earlier ones
@@ -125,8 +125,8 @@ public function run(): Task
                     $subquery = trim(substr($matchInfo['subqueryPart'], 1, -1)); // (SELECT ...) -> SELECT ...
                 }
 
-                Logger::debug("  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n");
-                Logger::debug("    Subquery: " . substr($subquery, 0, 500) . (strlen($subquery) > 500 ? '...' : '') . "\n");
+                Buddy::debugvv("  \n  Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:\n", '');
+                Buddy::debugvv("    Subquery: " . substr($subquery, 0, 500) . (strlen($subquery) > 500 ? '...' : '') . "\n", '');
 
                 // Strip any trailing ;SHOW META before executing (client may also append it)
                 $subquery = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $subquery);
@@ -146,7 +146,7 @@ public function run(): Task
                 }
 
                 // Execute subquery
-                Logger::debug("    Executing subquery...\n");
+                Buddy::debugvv("    Executing subquery...\n", '');
                 try {
                     $response = $manticoreClient->sendRequest($subquery);
                     if ($response->hasError()) {
@@ -154,7 +154,7 @@ public function run(): Task
                     }
                     $resultData = $response->getData();
                     $rowCount = count($resultData);
-                    Logger::debug("    Result count: $rowCount rows\n");
+                    Buddy::debugvv("    Result count: $rowCount rows\n", '');
                     if ($rowCount >= $effectiveLimit) {
                         throw new RuntimeException(
                             'Subquery #' . ($index + 1) . ' (iteration ' . $iteration . ') returned ' . $rowCount
@@ -164,7 +164,7 @@ public function run(): Task
                         );
                     }
                 } catch (\Throwable $e) {
-                    Logger::debug("    ERROR executing subquery: " . $e->getMessage() . "\n\n");
+                    Buddy::debugvv("    ERROR executing subquery: " . $e->getMessage() . "\n\n", '');
                     throw $e;
                 }
 
@@ -192,7 +192,7 @@ public function run(): Task
                         }
                     }
                 }
-                Logger::debug("    Extracted " . count($values) . " value(s)\n");
+                Buddy::debugvv("    Extracted " . count($values) . " value(s)\n", '');
 
                 // Create replacement string based on subquery type
                 if ($type === 'IN') {
@@ -209,12 +209,12 @@ public function run(): Task
                     } else {
                         // Take first value only for scalar comparison
                         if (count($values) > 1) {
-                            Logger::debug("    WARNING: Comparison subquery returned " . count($values) . " values, using first one only\n");
+                            Buddy::debugvv("    WARNING: Comparison subquery returned " . count($values) . " values, using first one only\n", '');
                         }
                         $replacement = $matchInfo['operator'] . ' ' . $values[0];
                     }
                 }
-                Logger::debug("    Replacement: " . substr($replacement, 0, 500) . (strlen($replacement) > 500 ? '...' : '') . "\n");
+                Buddy::debugvv("    Replacement: " . substr($replacement, 0, 500) . (strlen($replacement) > 500 ? '...' : '') . "\n", '');
 
                 // Replace this subquery with values using substr_replace for position-based replacement
                 $finalQuery = substr_replace(
@@ -225,25 +225,25 @@ public function run(): Task
                 );
             }
 
-            Logger::debug("  Query after iteration $iteration: " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n");
+            Buddy::debugvv("  Query after iteration $iteration: " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n", '');
         }
 
         if ($iteration >= $maxIterations) {
-            Logger::debug("  WARNING: Max iterations ($maxIterations) reached. Possible infinite loop or extremely deep nesting.\n");
+            Buddy::debugvv("  WARNING: Max iterations ($maxIterations) reached. Possible infinite loop or extremely deep nesting.\n", '');
         }
 
-        Logger::debug("\n  Final resolved query (after $iteration iteration(s)): " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n");
+        Buddy::debugvv("\n  Final resolved query (after $iteration iteration(s)): " . substr($finalQuery, 0, 500) . (strlen($finalQuery) > 500 ? '...' : '') . "\n", '');
 
         // Execute final query
-        Logger::debug("  Executing final query...\n");
+        Buddy::debugvv("  Executing final query...\n", '');
         try {
             $finalResponse = $manticoreClient->sendRequest($finalQuery);
             if ($finalResponse->hasError()) {
                 throw new RuntimeException('Final query failed: ' . $finalResponse->getError());
             }
-            Logger::debug("  SUCCESS! Returning result\n\n");
+            Buddy::debugvv("  SUCCESS! Returning result\n\n", '');
         } catch (\Throwable $e) {
-            Logger::debug("  ERROR executing final query: " . $e->getMessage() . "\n\n");
+            Buddy::debugvv("  ERROR executing final query: " . $e->getMessage() . "\n\n", '');
             throw $e;
         }
 
