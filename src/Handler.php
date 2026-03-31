@@ -263,7 +263,11 @@ public function run(): Task
             throw $e;
         }
 
+        TaskResult::warning('Test warning');
+
         $result = TaskResult::fromResponse($finalResponse);
+
+        $warnings[] = '2Test warning2';
 
         // Attach accumulated warnings to the result
         if (!empty($warnings)) {
