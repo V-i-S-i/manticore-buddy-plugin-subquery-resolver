@@ -45,23 +45,22 @@ final class Payload extends BasePayload
 	{
 		Buddy::debugvv(
 			sprintf(
-				"[%s] hasMatch() called!\n  command: %s\n  payload: %s\n  error: %s\n  path: %s\n",
+				"[SUBQUERY] [%s] hasMatch() called!  command: %s  payload: %s  error: %s  path: %s",
 				date('Y-m-d H:i:s'),
 				isset($request->command) ? $request->command : 'NOT SET',
 				isset($request->payload) ? substr($request->payload, 0, 500) : 'NOT SET',
 				isset($request->error) ? $request->error : 'NOT SET',
 				isset($request->path) ? $request->path : 'NOT SET'
-			),
-			''
+			)
 		);
 
 		try {
 			$query = self::getQuery($request);
-			Buddy::debugvv("  Extracted query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : '') . "\n", '');
+			Buddy::debugvv("[SUBQUERY]  Extracted query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : ''));
 
 			// Check if it's a SELECT query
 			if (!preg_match('/^\s*SELECT\s+/i', $query)) {
-				Buddy::debugvv("  Not a SELECT query\n\n", '');
+				Buddy::debugvv("[SUBQUERY]  Not a SELECT query");
 				return false;
 			}
 
@@ -74,13 +73,13 @@ final class Payload extends BasePayload
 
 			$hasSubquery = $hasInSubquery || $hasComparisonSubquery;
 
-			Buddy::debugvv("  Has IN subquery: " . ($hasInSubquery ? 'YES' : 'NO') . "\n", '');
-			Buddy::debugvv("  Has comparison subquery: " . ($hasComparisonSubquery ? 'YES' : 'NO') . "\n", '');
-			Buddy::debugvv("  Has any subquery: " . ($hasSubquery ? 'YES' : 'NO') . "\n\n", '');
+			Buddy::debugvv("[SUBQUERY]  Has IN subquery: " . ($hasInSubquery ? 'YES' : 'NO'));
+			Buddy::debugvv("[SUBQUERY]  Has comparison subquery: " . ($hasComparisonSubquery ? 'YES' : 'NO'));
+			Buddy::debugvv("[SUBQUERY]  Has any subquery: " . ($hasSubquery ? 'YES' : 'NO') . "");
 
 			return $hasSubquery;
 		} catch (\Throwable $e) {
-			Buddy::debugvv("  ERROR in hasMatch: " . $e->getMessage() . "\n\n", '');
+			Buddy::debugvv("[SUBQUERY]  ERROR in hasMatch: " . $e->getMessage() . "");
 			return false;
 		}
 	}
