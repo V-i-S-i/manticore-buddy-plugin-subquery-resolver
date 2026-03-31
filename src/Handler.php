@@ -45,6 +45,8 @@ public function run(): Task
     ): TaskResult {
         Buddy::debugvv("[SUBQUERY] [" . date('Y-m-d H:i:s') . "] Handler started");
 
+        $warnings = []; // Accumulate warnings to return to client
+
         $query = $payload->query;
         // Strip any trailing ;SHOW META that Manticore appends to queries
         $query = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $query);
@@ -168,13 +170,13 @@ public function run(): Task
                     Buddy::debugvv("[SUBQUERY]    Result count: $rowCount rows");
                     if ($rowCount >= $effectiveLimit) {
                         $truncatedSubquery = substr($subquery, 0, 100) . (strlen($subquery) > 100 ? '...' : '');
-                        Buddy::warning(
-                            'Subquery #' . ($index + 1) . ' (iteration ' . $iteration . ') returned ' . $rowCount
+                        $warningMsg = 'Subquery #' . ($index + 1) . ' (iteration ' . $iteration . ') returned ' . $rowCount
                             . ' rows, which equals the limit (' . $effectiveLimit . '). Results may be truncated. '
                             . 'Add LIMIT <n> inside the subquery to raise it, e.g.: '
                             . 'IN (SELECT ... LIMIT ' . ($effectiveLimit * 5) . '). '
-                            . 'Subquery: ' . $truncatedSubquery
-                        );
+                            . 'Subquery: ' . $truncatedSubquery;
+                        $warnings[] = $warningMsg;
+                        Buddy::warning($warningMsg);
                     }
                 } catch (\Throwable $e) {
                     Buddy::debugvv("[SUBQUERY]    ERROR executing subquery: " . $e->getMessage() . "");
@@ -261,7 +263,14 @@ public function run(): Task
             throw $e;
         }
 
-        return TaskResult::fromResponse($finalResponse);
+        $result = TaskResult::fromResponse($finalResponse);
+
+        // Attach accumulated warnings to the result
+        if (!empty($warnings)) {
+            $result->warning(implode("\n", $warnings));
+        }
+
+        return $result;
     };
 
     return Task::create(
