@@ -134,9 +134,9 @@ The `OPTION max_matches` is set automatically to match the explicit `LIMIT`, so 
 
 ### Automatic ORDER BY for Proper Limiting
 
-**Important:** Due to a Manticore Search behavior, `LIMIT` clauses may not work correctly without an `ORDER BY` clause. The plugin automatically adds `ORDER BY id` to subqueries that have a `LIMIT` but no ordering specified.
+**Important:** Due to a Manticore Search behavior, `LIMIT` clauses may not work correctly without an `ORDER BY` clause. The plugin automatically adds `ORDER BY id DESC` to subqueries that have a `LIMIT` but no ordering specified.
 
-**When ORDER BY id is added automatically:**
+**When ORDER BY id DESC is added automatically:**
 - Subquery has `LIMIT` (explicit or default 20,000)
 - No existing `ORDER BY` clause
 - No `GROUP BY` clause
@@ -147,7 +147,7 @@ The `OPTION max_matches` is set automatically to match the explicit `LIMIT`, so 
 -- Original subquery (auto-transformed):
 SELECT id FROM articles WHERE status = 'active'
 -- Becomes:
-SELECT id FROM articles WHERE status = 'active' ORDER BY id LIMIT 20000
+SELECT id FROM articles WHERE status = 'active' ORDER BY id DESC LIMIT 20000
 
 -- User specified ORDER BY (respected):
 SELECT id FROM articles WHERE status = 'active' ORDER BY created_at DESC LIMIT 1000
