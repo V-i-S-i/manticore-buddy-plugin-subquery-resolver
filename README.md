@@ -132,6 +132,38 @@ GROUP BY aid ORDER BY cnt DESC LIMIT 500;
 
 The `OPTION max_matches` is set automatically to match the explicit `LIMIT`, so no extra syntax is needed.
 
+### Automatic ORDER BY for Proper Limiting
+
+**Important:** Due to a Manticore Search behavior, `LIMIT` clauses may not work correctly without an `ORDER BY` clause. The plugin automatically adds `ORDER BY id` to subqueries that have a `LIMIT` but no ordering specified.
+
+**When ORDER BY id is added automatically:**
+- Subquery has `LIMIT` (explicit or default 20,000)
+- No existing `ORDER BY` clause
+- No `GROUP BY` clause
+- No `MATCH()` clause (which orders by relevance weight)
+
+**Example transformations:**
+```sql
+-- Original subquery (auto-transformed):
+SELECT id FROM articles WHERE status = 'active'
+-- Becomes:
+SELECT id FROM articles WHERE status = 'active' ORDER BY id LIMIT 20000
+
+-- User specified ORDER BY (respected):
+SELECT id FROM articles WHERE status = 'active' ORDER BY created_at DESC LIMIT 1000
+-- No changes - user's ORDER BY is preserved
+
+-- GROUP BY present (no ORDER BY added):
+SELECT category_id FROM articles WHERE status = 'active' GROUP BY category_id
+-- No ORDER BY added - would interfere with grouping
+
+-- MATCH() present (no ORDER BY added):
+SELECT id FROM articles WHERE MATCH('keyword') LIMIT 5000
+-- No ORDER BY added - MATCH() orders by weight/relevance
+```
+
+This automatic ordering ensures that LIMIT clauses work correctly in Manticore Search without requiring manual ORDER BY clauses in every subquery.
+
 ## Installation
 
 **For Users (Installing from GitHub):**
