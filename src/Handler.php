@@ -148,14 +148,14 @@ public function run(): Task
                     if (!preg_match('/\bOPTION\b.*\bmax_matches\s*=/i', $subquery)) {
                         $subquery .= " OPTION max_matches=$effectiveLimit";
                     }
-                    // Add ORDER BY id before existing LIMIT if needed
+                    // Add ORDER BY id DESC before existing LIMIT if needed
                     if ($needsOrderBy) {
-                        $subquery = preg_replace('/(\bLIMIT\s+\d+)/i', 'ORDER BY id $1', $subquery);
+                        $subquery = preg_replace('/(\bLIMIT\s+\d+)/i', 'ORDER BY id DESC $1', $subquery);
                     }
                 } else {
                     $effectiveLimit = $defaultLimit;
                     if ($needsOrderBy) {
-                        $subquery .= " ORDER BY id LIMIT $defaultLimit OPTION max_matches=$defaultLimit";
+                        $subquery .= " ORDER BY id DESC LIMIT $defaultLimit OPTION max_matches=$defaultLimit";
                     } else {
                         $subquery .= " LIMIT $defaultLimit OPTION max_matches=$defaultLimit";
                     }
