@@ -132,37 +132,34 @@ GROUP BY aid ORDER BY cnt DESC LIMIT 500;
 
 The `OPTION max_matches` is set automatically to match the explicit `LIMIT`, so no extra syntax is needed.
 
-### Automatic ORDER BY for Proper Limiting
+### Automatic OPTION cutoff=0 for Proper Limiting
 
-**Important:** Due to a Manticore Search behavior, `LIMIT` clauses may not work correctly without an `ORDER BY` clause. The plugin automatically adds `ORDER BY id DESC` to subqueries that have a `LIMIT` but no ordering specified.
+**Important:** Due to a Manticore Search requirement, `LIMIT` clauses require either an `ORDER BY` clause or `OPTION cutoff=0` to work correctly. The plugin automatically adds `OPTION cutoff=0` to all subqueries to ensure proper limiting without forcing a specific sort order.
 
-**When ORDER BY id DESC is added automatically:**
-- Subquery has `LIMIT` (explicit or default 20,000)
-- No existing `ORDER BY` clause
-- No `GROUP BY` clause
-- No `MATCH()` clause (which orders by relevance weight)
+**What the plugin adds automatically:**
+- `OPTION cutoff=0` is added to all subqueries
+- `OPTION max_matches=N` is set to match the LIMIT value
+- User's existing ORDER BY, GROUP BY, or MATCH() clauses are fully respected
 
 **Example transformations:**
 ```sql
 -- Original subquery (auto-transformed):
 SELECT id FROM articles WHERE status = 'active'
 -- Becomes:
-SELECT id FROM articles WHERE status = 'active' ORDER BY id DESC LIMIT 20000
+SELECT id FROM articles WHERE status = 'active' LIMIT 20000 OPTION max_matches=20000, cutoff=0
 
--- User specified ORDER BY (respected):
+-- User specified ORDER BY (respected, cutoff still added):
 SELECT id FROM articles WHERE status = 'active' ORDER BY created_at DESC LIMIT 1000
--- No changes - user's ORDER BY is preserved
+-- Becomes:
+SELECT id FROM articles WHERE status = 'active' ORDER BY created_at DESC LIMIT 1000 OPTION max_matches=1000, cutoff=0
 
--- GROUP BY present (no ORDER BY added):
-SELECT category_id FROM articles WHERE status = 'active' GROUP BY category_id
--- No ORDER BY added - would interfere with grouping
-
--- MATCH() present (no ORDER BY added):
+-- MATCH() query (cutoff added, weight ordering respected):
 SELECT id FROM articles WHERE MATCH('keyword') LIMIT 5000
--- No ORDER BY added - MATCH() orders by weight/relevance
+-- Becomes:
+SELECT id FROM articles WHERE MATCH('keyword') LIMIT 5000 OPTION max_matches=5000, cutoff=0
 ```
 
-This automatic ordering ensures that LIMIT clauses work correctly in Manticore Search without requiring manual ORDER BY clauses in every subquery.
+The `cutoff=0` option ensures that LIMIT clauses work correctly in Manticore Search without requiring manual ORDER BY clauses or OPTION settings in every subquery.
 
 ## Installation
 

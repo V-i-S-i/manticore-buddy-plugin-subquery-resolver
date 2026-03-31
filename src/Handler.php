@@ -135,30 +135,25 @@ public function run(): Task
 
                 // Add LIMIT + max_matches if subquery has none - Manticore defaults to LIMIT 20.
                 // If an explicit LIMIT N is present, honour it and set max_matches=N as well.
-                // Also add ORDER BY id for proper limiting (unless there's already ORDER BY, GROUP BY, or MATCH())
+                // Also add cutoff=0 to ensure LIMIT works correctly without ORDER BY requirement
                 $defaultLimit = 20000;
-                $hasOrderBy = preg_match('/\bORDER\s+BY\b/i', $subquery);
-                $hasGroupBy = preg_match('/\bGROUP\s+BY\b/i', $subquery);
-                $hasMatch = preg_match('/\bMATCH\s*\(/i', $subquery);
-                $needsOrderBy = !$hasOrderBy && !$hasGroupBy && !$hasMatch;
 
                 if (preg_match('/\bLIMIT\s+(\d+)/i', $subquery, $limitMatch)) {
                     $effectiveLimit = (int)$limitMatch[1];
-                    // Ensure OPTION max_matches matches the explicit limit (add if absent)
-                    if (!preg_match('/\bOPTION\b.*\bmax_matches\s*=/i', $subquery)) {
-                        $subquery .= " OPTION max_matches=$effectiveLimit";
-                    }
-                    // Add ORDER BY id DESC before existing LIMIT if needed
-                    if ($needsOrderBy) {
-                        $subquery = preg_replace('/(\bLIMIT\s+\d+)/i', 'ORDER BY id DESC $1', $subquery);
+                    // Ensure OPTION has max_matches and cutoff=0
+                    if (!preg_match('/\bOPTION\b/i', $subquery)) {
+                        $subquery .= " OPTION max_matches=$effectiveLimit, cutoff=0";
+                    } else {
+                        if (!preg_match('/\bmax_matches\s*=/i', $subquery)) {
+                            $subquery = preg_replace('/(\bOPTION\b)/i', '$1 max_matches=' . $effectiveLimit . ',', $subquery);
+                        }
+                        if (!preg_match('/\bcutoff\s*=/i', $subquery)) {
+                            $subquery = preg_replace('/(\bOPTION\b.*?)(\s*$|;)/i', '$1, cutoff=0$2', $subquery);
+                        }
                     }
                 } else {
                     $effectiveLimit = $defaultLimit;
-                    if ($needsOrderBy) {
-                        $subquery .= " ORDER BY id DESC LIMIT $defaultLimit OPTION max_matches=$defaultLimit";
-                    } else {
-                        $subquery .= " LIMIT $defaultLimit OPTION max_matches=$defaultLimit";
-                    }
+                    $subquery .= " LIMIT $defaultLimit OPTION max_matches=$defaultLimit, cutoff=0";
                 }
 
                 // Execute subquery
