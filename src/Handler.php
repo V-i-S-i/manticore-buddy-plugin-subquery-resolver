@@ -158,11 +158,13 @@ public function run(): Task
                     $rowCount = count($resultData);
                     Buddy::debugvv("[SUBQUERY]    Result count: $rowCount rows");
                     if ($rowCount >= $effectiveLimit) {
-                        throw new RuntimeException(
+                        $truncatedSubquery = substr($subquery, 0, 100) . (strlen($subquery) > 100 ? '...' : '');
+                        Buddy::warning(
                             'Subquery #' . ($index + 1) . ' (iteration ' . $iteration . ') returned ' . $rowCount
                             . ' rows, which equals the limit (' . $effectiveLimit . '). Results may be truncated. '
                             . 'Add LIMIT <n> inside the subquery to raise it, e.g.: '
-                            . 'IN (SELECT ... LIMIT ' . ($effectiveLimit * 5) . ')'
+                            . 'IN (SELECT ... LIMIT ' . ($effectiveLimit * 5) . '). '
+                            . 'Subquery: ' . $truncatedSubquery
                         );
                     }
                 } catch (\Throwable $e) {
