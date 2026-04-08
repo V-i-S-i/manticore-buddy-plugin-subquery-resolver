@@ -21,6 +21,8 @@ Manticore Search does not natively support subqueries in WHERE clauses. This plu
 - Transparent subquery execution and result injection
 - Handles empty result sets gracefully (replaces with NULL)
 - Supports Manticore MVA (multi-value attributes)
+- **Subquery deduplication**: identical subqueries appearing multiple times are executed only once
+- **Same-table merge**: subqueries from the same table with the same filters but different columns are merged into a single multi-column query
 - No client-side changes required
 - Default result limit of 20,000 rows per subquery with error if limit is reached
 - Override limit per subquery with an explicit LIMIT clause
@@ -102,6 +104,44 @@ WHERE product_id IN (1001, 1002, 1003, 1004, 1005)
 
 -- Final query executed
 ```
+
+### Subquery Deduplication
+
+When the same subquery appears multiple times in a query, the plugin executes it only once and reuses the cached result for all occurrences. This is common when the same filter is used in multiple places:
+
+```sql
+SELECT id FROM mediamonitoring_all
+WHERE aid IN (SELECT id FROM articles WHERE status = 'active')
+   OR bid IN (SELECT id FROM articles WHERE status = 'active');
+-- The subquery is executed only once, result injected in both positions
+```
+
+Deduplication works across all iteration levels — if a subquery resolved in iteration 1 appears again in iteration 2, it is served from cache.
+
+### Same-Table Subquery Merging
+
+When multiple subqueries select different columns from the same table with the same filters, the plugin merges them into a single multi-column query:
+
+```sql
+-- Original: 4 separate subqueries hitting the same table
+SELECT id FROM mediamonitoring_all
+WHERE ANY(keyword_id) IN (SELECT keyword_id FROM customers WHERE id = 3408)
+  AND feed_id IN (SELECT feed_id FROM customers WHERE id = 3408)
+  AND date_added > (SELECT archive_start FROM customers WHERE id = 3408)
+  AND date_added < (SELECT archive_end FROM customers WHERE id = 3408);
+
+-- Plugin merges into 1 query:
+-- SELECT keyword_id, feed_id, archive_start, archive_end FROM customers WHERE id = 3408
+-- Then distributes each column's values to the corresponding injection point
+```
+
+**Requirements for merging:**
+- Each subquery must select a single simple column name (no expressions like `COUNT(*)`)
+- The `FROM ... WHERE ...` clause must be identical across all subqueries
+
+If merging fails (e.g., Manticore rejects the merged query), the plugin falls back to executing each subquery individually — no breakage.
+
+**Combined effect:** In a query where these 4 subqueries each appear twice (in `aid IN` and `bid IN` blocks), the plugin reduces **10 executions to just 2** (1 merged customer query + 1 main subquery, per iteration).
 
 ### Subquery Result Limits
 
@@ -460,12 +500,16 @@ See [INSTALLATION.md](INSTALLATION.md#troubleshooting) for detailed troubleshoot
 
 - **Simple queries**: Executes subquery first, then main query (2 queries total)
   - Works the same for both IN clauses and comparison operators
-- **Multiple subqueries**: Executes each subquery + final query (N+1 queries for N subqueries)
+- **Multiple subqueries**: Executes each unique subquery + final query
   - Can mix IN and comparison operator subqueries
-- **Nested subqueries**: Executes queries layer by layer (sum of all subqueries at each level + final query)
-  - 2 levels: ~3-4 queries
+  - Duplicate subqueries are executed only once (deduplication)
+  - Subqueries from the same table with same filters are merged into one query
+- **Nested subqueries**: Executes queries layer by layer (sum of unique subqueries at each level + final query)
+  - 2 levels: ~3-4 queries (fewer with deduplication/merging)
   - 3 levels: ~4-6 queries
   - Each nesting level adds one iteration
+- **Deduplication**: Zero overhead — just string comparison of normalized subquery text
+- **Same-table merging**: Negligible overhead — one regex parse per unique subquery to check if columns can be merged. Falls back to individual execution if merged query fails.
 - **Comparison operators**: Return single scalar value (first row only if multiple returned)
 - **Result limits**: Each subquery is capped at 20,000 rows by default. If the limit is hit, an error is raised. Override with an explicit `LIMIT N` inside the subquery (e.g. `IN (SELECT ... LIMIT 100000)`).
 - **Large result sets**: For IN clauses with many values, there may be a slight delay due to query string size. Keep subquery result sets reasonable in size.
