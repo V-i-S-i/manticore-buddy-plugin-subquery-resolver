@@ -43,39 +43,19 @@ final class Payload extends BasePayload
 	 */
 	public static function hasMatch(Request $request): bool
 	{
-		Buddy::debugvv(
-			sprintf(
-				"[SUBQUERY] [%s] hasMatch() called!  command: %s  payload: %s  error: %s  path: %s",
-				date('Y-m-d H:i:s'),
-				isset($request->command) ? $request->command : 'NOT SET',
-				isset($request->payload) ? substr($request->payload, 0, 500) : 'NOT SET',
-				isset($request->error) ? $request->error : 'NOT SET',
-				isset($request->path) ? $request->path : 'NOT SET'
-			)
-		);
 
 		try {
 			$query = self::getQuery($request);
+			
+			// Fast bail-out: no WHERE with SELECT after it means no subquery
+			$wherePos = stripos($query, 'WHERE');
+			if ($wherePos === false) return false;
+			if (stripos($query, 'SELECT', $wherePos) === false) return false;
+
+			// Check for subquery pattern: IN/NOT IN or comparison operators followed by (SELECT ...)
+			$hasSubquery = preg_match('/(?:\b(?:NOT\s+)?IN|=|!=|<>|<=|>=|<|>)\s*\(\s*SELECT\s+/i', $query) > 0;
+
 			Buddy::debugvv("[SUBQUERY]  Extracted query: " . substr($query, 0, 500) . (strlen($query) > 500 ? '...' : ''));
-
-			// Check if it's a SELECT query
-			if (!preg_match('/^\s*SELECT\s+/i', $query)) {
-				Buddy::debugvv("[SUBQUERY]  Not a SELECT query");
-				return false;
-			}
-
-			// Check for IN clause with subquery pattern: IN (SELECT ...)
-			// This matches both IN and NOT IN
-			$hasInSubquery = preg_match('/\b(?:NOT\s+)?IN\s*\(\s*SELECT\s+/i', $query) > 0;
-
-			// Check for comparison operator subqueries: =, !=, <>, <, >, <=, >= (SELECT ...)
-			$hasComparisonSubquery = preg_match('/(?:=|!=|<>|<=|>=|<|>)\s*\(\s*SELECT\s+/i', $query) > 0;
-
-			$hasSubquery = $hasInSubquery || $hasComparisonSubquery;
-
-			Buddy::debugvv("[SUBQUERY]  Has IN subquery: " . ($hasInSubquery ? 'YES' : 'NO'));
-			Buddy::debugvv("[SUBQUERY]  Has comparison subquery: " . ($hasComparisonSubquery ? 'YES' : 'NO'));
-			Buddy::debugvv("[SUBQUERY]  Has any subquery: " . ($hasSubquery ? 'YES' : 'NO') . "");
 
 			return $hasSubquery;
 		} catch (\Throwable $e) {
