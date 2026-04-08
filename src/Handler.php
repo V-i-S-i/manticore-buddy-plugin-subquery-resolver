@@ -191,15 +191,9 @@ public function run(): Task
                             $firstValue = reset($row);
 
                             // Handle comma-separated MVA (multi-value attribute) strings from Manticore
+                            // MVA values are always integers, so pass the comma-separated string through directly
                             if (is_string($firstValue) && str_contains($firstValue, ',')) {
-                                // Split comma-separated values
-                                $mvaValues = explode(',', $firstValue);
-                                foreach ($mvaValues as $val) {
-                                    $val = trim($val);
-                                    if ($val !== '') {
-                                        $values[] = is_numeric($val) ? $val : "'" . addslashes($val) . "'";
-                                    }
-                                }
+                                $values[] = $firstValue;
                             } elseif (is_numeric($firstValue) || is_string($firstValue)) {
                                 // Single value
                                 $values[] = is_numeric($firstValue) ? $firstValue : "'" . addslashes((string)$firstValue) . "'";
@@ -207,6 +201,7 @@ public function run(): Task
                         }
                     }
                 }
+                unset($resultData);
                 Buddy::debugvv("[SUBQUERY]    Extracted " . count($values) . " value(s)");
 
                 // Create replacement string based on subquery type
