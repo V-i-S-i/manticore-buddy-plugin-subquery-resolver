@@ -46,6 +46,7 @@ public function run(): Task
         Buddy::debugvv("[SUBQUERY] [" . date('Y-m-d H:i:s') . "] Handler started");
 
         $warnings = []; // Accumulate warnings to return to client
+        $subqueryCache = []; // Cache: normalized subquery text => extracted values array
 
         $query = $payload->query;
         // Strip any trailing ;SHOW META that Manticore appends to queries
@@ -109,31 +110,150 @@ public function run(): Task
             $subqueryCount = count($allMatches);
             Buddy::debugvv("[SUBQUERY]  Found $subqueryCount subquery(ies) in this iteration");
 
-            // Process subqueries from right to left (reverse order by offset)
-            // This ensures that replacing later subqueries doesn't affect the positions of earlier ones
-            usort($allMatches, function ($a, $b) {
-                return $b['offset'] - $a['offset']; // Sort by offset descending
-            });
-
-            foreach ($allMatches as $index => $matchInfo) {
-                $type = $matchInfo['type'];
-                $fullMatch = $matchInfo['fullMatch'];
-                $offset = $matchInfo['offset'];
-
-                // Extract the subquery SQL (without outer parentheses)
-                if ($type === 'IN') {
-                    $subquery = trim(substr($matchInfo['fullMatch'], 1, -1)); // (SELECT ...) -> SELECT ...
+            // Phase 1: Normalize and deduplicate subqueries
+            foreach ($allMatches as &$matchInfo) {
+                if ($matchInfo['type'] === 'IN') {
+                    $rawSubquery = trim(substr($matchInfo['fullMatch'], 1, -1));
                 } else {
-                    // COMPARISON type
-                    $subquery = trim(substr($matchInfo['subqueryPart'], 1, -1)); // (SELECT ...) -> SELECT ...
+                    $rawSubquery = trim(substr($matchInfo['subqueryPart'], 1, -1));
+                }
+                $rawSubquery = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $rawSubquery);
+                $normalizedKey = strtolower(preg_replace('/\s+/', ' ', trim($rawSubquery)));
+                $matchInfo['_normalizedKey'] = $normalizedKey;
+                $matchInfo['_rawSubquery'] = $rawSubquery;
+            }
+            unset($matchInfo);
+
+            // Collect unique subquery keys (preserving first occurrence order)
+            $uniqueKeys = [];
+            foreach ($allMatches as $matchInfo) {
+                $key = $matchInfo['_normalizedKey'];
+                if (!isset($uniqueKeys[$key])) {
+                    $uniqueKeys[$key] = $matchInfo['_rawSubquery'];
+                }
+            }
+
+            $totalCount = count($allMatches);
+            $uniqueCount = count($uniqueKeys);
+            if ($uniqueCount < $totalCount) {
+                Buddy::debugvv("[SUBQUERY]  Deduplicated: $totalCount subqueries -> $uniqueCount unique");
+            }
+
+            // Phase 1.5: Merge subqueries from same table with same filters
+            // If multiple subqueries differ only in SELECT column, execute one multi-column query
+            $simpleSelectPattern = '/^\s*SELECT\s+(`?\w+`?)\s+FROM\s+(.+)$/is';
+            $mergeGroups = []; // normalized_rest => [ ['key' => ..., 'column' => ..., 'rawRest' => ...], ... ]
+
+            foreach ($uniqueKeys as $normalizedKey => $rawSubquery) {
+                if (isset($subqueryCache[$normalizedKey])) {
+                    continue; // Already cached from prior iteration
+                }
+                if (preg_match($simpleSelectPattern, $rawSubquery, $selectMatch)) {
+                    $column = $selectMatch[1];
+                    $rest = $selectMatch[2];
+                    $normalizedRest = strtolower(preg_replace('/\s+/', ' ', trim($rest)));
+                    $mergeGroups[$normalizedRest][] = [
+                        'key' => $normalizedKey,
+                        'column' => $column,
+                        'rawRest' => $rest,
+                    ];
+                }
+            }
+
+            // Execute merged queries for groups with >1 member
+            foreach ($mergeGroups as $normalizedRest => $group) {
+                if (count($group) <= 1) {
+                    continue;
+                }
+
+                $columns = array_map(fn($g) => $g['column'], $group);
+                $rawRest = $group[0]['rawRest'];
+                $mergedSubquery = 'SELECT ' . implode(', ', $columns) . ' FROM ' . $rawRest;
+
+                Buddy::debugvv("");
+                Buddy::debugvv("[SUBQUERY]   Merged " . count($group) . " subqueries into one:");
+                Buddy::debugvv("[SUBQUERY]    Query: " . substr($mergedSubquery, 0, 500) . (strlen($mergedSubquery) > 500 ? '...' : ''));
+
+                // Add LIMIT/OPTION if missing (same logic as Phase 2)
+                $mergedDefaultLimit = 20000;
+                if (preg_match('/\bLIMIT\s+(\d+)/i', $mergedSubquery, $mLimitMatch)) {
+                    $mergedEffectiveLimit = (int)$mLimitMatch[1];
+                    if (!preg_match('/\bOPTION\b/i', $mergedSubquery)) {
+                        $mergedSubquery .= " OPTION max_matches=$mergedEffectiveLimit, cutoff=0";
+                    } else {
+                        if (!preg_match('/\bmax_matches\s*=/i', $mergedSubquery)) {
+                            $mergedSubquery = preg_replace('/(\bOPTION\b)/i', '$1 max_matches=' . $mergedEffectiveLimit . ',', $mergedSubquery);
+                        }
+                        if (!preg_match('/\bcutoff\s*=/i', $mergedSubquery)) {
+                            $mergedSubquery = preg_replace('/(\bOPTION\b.*?)(\s*$|;)/i', '$1, cutoff=0$2', $mergedSubquery);
+                        }
+                    }
+                } else {
+                    $mergedEffectiveLimit = $mergedDefaultLimit;
+                    $mergedSubquery .= " LIMIT $mergedDefaultLimit OPTION max_matches=$mergedDefaultLimit, cutoff=0";
+                }
+
+                // Execute merged query
+                try {
+                    $mergedResponse = $manticoreClient->sendRequest($mergedSubquery);
+                    if ($mergedResponse->hasError()) {
+                        Buddy::debugvv("[SUBQUERY]    Merged query failed: " . $mergedResponse->getError() . ", falling back to individual execution");
+                        continue; // Phase 2 will handle them individually
+                    }
+                    $mergedResultData = $mergedResponse->getData();
+                    $mergedRowCount = count($mergedResultData);
+                    Buddy::debugvv("[SUBQUERY]    Merged result: $mergedRowCount rows");
+
+                    if ($mergedRowCount >= $mergedEffectiveLimit) {
+                        $truncatedQuery = substr($mergedSubquery, 0, 100) . (strlen($mergedSubquery) > 100 ? '...' : '');
+                        $warningMsg = 'Merged subquery returned ' . $mergedRowCount
+                            . ' rows, which equals the limit (' . $mergedEffectiveLimit . '). Results may be truncated. '
+                            . 'Query: ' . $truncatedQuery;
+                        $warnings[] = $warningMsg;
+                        Buddy::warning($warningMsg);
+                    }
+                } catch (\Throwable $e) {
+                    Buddy::debugvv("[SUBQUERY]    ERROR in merged query: " . $e->getMessage() . ", falling back to individual execution");
+                    continue; // Phase 2 will handle them individually
+                }
+
+                // Distribute results: extract each column's values into individual cache entries
+                foreach ($group as $member) {
+                    $colName = trim($member['column'], '`');
+                    $values = [];
+                    foreach ($mergedResultData as $row) {
+                        if (!is_array($row) || !isset($row[$colName])) {
+                            continue;
+                        }
+                        $firstValue = $row[$colName];
+                        if (is_string($firstValue) && str_contains($firstValue, ',')) {
+                            $values[] = $firstValue; // MVA comma-separated
+                        } elseif (is_numeric($firstValue) || is_string($firstValue)) {
+                            $values[] = is_numeric($firstValue) ? $firstValue : "'" . addslashes((string)$firstValue) . "'";
+                        }
+                    }
+                    $subqueryCache[$member['key']] = $values;
+                    Buddy::debugvv("[SUBQUERY]    Column '$colName': " . count($values) . " value(s) cached");
+                }
+                unset($mergedResultData);
+            }
+
+            // Phase 2: Execute only unique subqueries (skip if already cached from prior iteration or merge)
+            $subqueryIndex = 0;
+            foreach ($uniqueKeys as $normalizedKey => $rawSubquery) {
+                $subqueryIndex++;
+                if (isset($subqueryCache[$normalizedKey])) {
+                    Buddy::debugvv("");
+                    Buddy::debugvv("[SUBQUERY]   Subquery #$subqueryIndex: CACHE HIT (" . count($subqueryCache[$normalizedKey]) . " cached values)");
+                    Buddy::debugvv("[SUBQUERY]    Subquery: " . substr($rawSubquery, 0, 500) . (strlen($rawSubquery) > 500 ? '...' : ''));
+                    continue;
                 }
 
                 Buddy::debugvv("");
-                Buddy::debugvv("[SUBQUERY]   Processing subquery #" . ($index + 1) . " (type: $type) at offset $offset:");
-                Buddy::debugvv("[SUBQUERY]    Subquery: " . substr($subquery, 0, 500) . (strlen($subquery) > 500 ? '...' : ''));
+                Buddy::debugvv("[SUBQUERY]   Executing unique subquery #$subqueryIndex / $uniqueCount:");
+                Buddy::debugvv("[SUBQUERY]    Subquery: " . substr($rawSubquery, 0, 500) . (strlen($rawSubquery) > 500 ? '...' : ''));
 
-                // Strip any trailing ;SHOW META before executing (client may also append it)
-                $subquery = preg_replace('/\s*;\s*SHOW\s+META\s*$/is', '', $subquery);
+                $subquery = $rawSubquery;
 
                 // Add LIMIT + max_matches if subquery has none - Manticore defaults to LIMIT 20.
                 // If an explicit LIMIT N is present, honour it and set max_matches=N as well.
@@ -163,14 +283,14 @@ public function run(): Task
                 try {
                     $response = $manticoreClient->sendRequest($subquery);
                     if ($response->hasError()) {
-                        throw new RuntimeException('Subquery #' . ($index + 1) . ' (iteration ' . $iteration . ') failed: ' . $response->getError());
+                        throw new RuntimeException('Unique subquery #' . $subqueryIndex . ' (iteration ' . $iteration . ') failed: ' . $response->getError());
                     }
                     $resultData = $response->getData();
                     $rowCount = count($resultData);
                     Buddy::debugvv("[SUBQUERY]    Result count: $rowCount rows");
                     if ($rowCount >= $effectiveLimit) {
                         $truncatedSubquery = substr($subquery, 0, 100) . (strlen($subquery) > 100 ? '...' : '');
-                        $warningMsg = 'Subquery #' . ($index + 1) . ' (iteration ' . $iteration . ') returned ' . $rowCount
+                        $warningMsg = 'Subquery #' . $subqueryIndex . ' (iteration ' . $iteration . ') returned ' . $rowCount
                             . ' rows, which equals the limit (' . $effectiveLimit . '). Results may be truncated. '
                             . 'Add LIMIT <n> inside the subquery to raise it, e.g.: '
                             . 'IN (SELECT ... LIMIT ' . ($effectiveLimit * 5) . '). '
@@ -204,27 +324,39 @@ public function run(): Task
                 unset($resultData);
                 Buddy::debugvv("[SUBQUERY]    Extracted " . count($values) . " value(s)");
 
+                // Cache the extracted values
+                $subqueryCache[$normalizedKey] = $values;
+            }
+
+            // Phase 3: Inject results into all match positions (right-to-left)
+            usort($allMatches, function ($a, $b) {
+                return $b['offset'] - $a['offset'];
+            });
+
+            foreach ($allMatches as $matchInfo) {
+                $type = $matchInfo['type'];
+                $fullMatch = $matchInfo['fullMatch'];
+                $offset = $matchInfo['offset'];
+                $values = $subqueryCache[$matchInfo['_normalizedKey']];
+
                 // Create replacement string based on subquery type
                 if ($type === 'IN') {
-                    // IN clause: wrap values in parentheses
                     if (empty($values)) {
                         $replacement = '(NULL)';
                     } else {
                         $replacement = '(' . implode(', ', $values) . ')';
                     }
                 } else {
-                    // COMPARISON operator: return scalar value (first value only)
                     if (empty($values)) {
                         $replacement = $matchInfo['operator'] . ' NULL';
                     } else {
-                        // Take first value only for scalar comparison
                         if (count($values) > 1) {
                             Buddy::debugvv("[SUBQUERY]    WARNING: Comparison subquery returned " . count($values) . " values, using first one only");
                         }
                         $replacement = $matchInfo['operator'] . ' ' . $values[0];
                     }
                 }
-                Buddy::debugvv("[SUBQUERY]    Replacement: " . substr($replacement, 0, 500) . (strlen($replacement) > 500 ? '...' : ''));
+                Buddy::debugvv("[SUBQUERY]    Replacement at offset $offset: " . substr($replacement, 0, 200) . (strlen($replacement) > 200 ? '...' : ''));
 
                 // Replace this subquery with values using substr_replace for position-based replacement
                 $finalQuery = substr_replace(
