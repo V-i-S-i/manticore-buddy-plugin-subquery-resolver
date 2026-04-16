@@ -176,7 +176,9 @@ public function run(): Task
 
                 // Add LIMIT/OPTION if missing (same logic as Phase 2)
                 $mergedDefaultLimit = 20000;
+                $mergedUserSetLimit = false;
                 if (preg_match('/\bLIMIT\s+(\d+)/i', $mergedSubquery, $mLimitMatch)) {
+                    $mergedUserSetLimit = true;
                     $mergedEffectiveLimit = (int)$mLimitMatch[1];
                     if (!preg_match('/\bOPTION\b/i', $mergedSubquery)) {
                         $mergedSubquery .= " OPTION max_matches=$mergedEffectiveLimit, cutoff=0";
@@ -204,7 +206,7 @@ public function run(): Task
                     $mergedRowCount = count($mergedResultData);
                     Buddy::debugvv("[SUBQUERY]    Merged result: $mergedRowCount rows");
 
-                    if ($mergedRowCount >= $mergedEffectiveLimit) {
+                    if (!$mergedUserSetLimit && $mergedRowCount >= $mergedEffectiveLimit) {
                         $truncatedQuery = substr($mergedSubquery, 0, 100) . (strlen($mergedSubquery) > 100 ? '...' : '');
                         $warningMsg = 'Merged subquery returned ' . $mergedRowCount
                             . ' rows, which equals the limit (' . $mergedEffectiveLimit . '). Results may be truncated. '
@@ -260,7 +262,9 @@ public function run(): Task
                 // Also add cutoff=0 to ensure LIMIT works correctly without ORDER BY requirement
                 $defaultLimit = 20000;
 
+                $userSetLimit = false;
                 if (preg_match('/\bLIMIT\s+(\d+)/i', $subquery, $limitMatch)) {
+                    $userSetLimit = true;
                     $effectiveLimit = (int)$limitMatch[1];
                     // Ensure OPTION has max_matches and cutoff=0
                     if (!preg_match('/\bOPTION\b/i', $subquery)) {
@@ -288,7 +292,7 @@ public function run(): Task
                     $resultData = $response->getData();
                     $rowCount = count($resultData);
                     Buddy::debugvv("[SUBQUERY]    Result count: $rowCount rows");
-                    if ($rowCount >= $effectiveLimit) {
+                    if (!$userSetLimit && $rowCount >= $effectiveLimit) {
                         $truncatedSubquery = substr($subquery, 0, 100) . (strlen($subquery) > 100 ? '...' : '');
                         $warningMsg = 'Subquery #' . $subqueryIndex . ' (iteration ' . $iteration . ') returned ' . $rowCount
                             . ' rows, which equals the limit (' . $effectiveLimit . '). Results may be truncated. '
